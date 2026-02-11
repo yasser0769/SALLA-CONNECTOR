@@ -8,8 +8,15 @@ const {
   tokenRequest,
 } = require('../_lib/salla');
 
+function buildStoreInfoUrl(apiBase) {
+  const base = String(apiBase || '').replace(/\/+$/, '');
+  if (base.endsWith('/admin/v2')) return `${base}/store/info`;
+  return `${base}/admin/v2/store/info`;
+}
+
 async function callStore(config, accessToken) {
-  const resp = await fetch(`${config.apiBase}/admin/v2/store`, {
+  const storeUrl = buildStoreInfoUrl(config.apiBase);
+  const resp = await fetch(storeUrl, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -33,7 +40,7 @@ module.exports = async function handler(req, res) {
 
   try {
     let upstream = await callStore(config, session.access_token);
-    console.log(`[salla:${id}] test-token status=${upstream.status} path=/admin/v2/store`);
+    console.log(`[salla:${id}] test-token status=${upstream.status} path=${buildStoreInfoUrl(config.apiBase)}`);
 
     if ((upstream.status === 401 || upstream.status === 403) && session.refresh_token) {
       const refreshed = await tokenRequest(config, {
@@ -52,7 +59,7 @@ module.exports = async function handler(req, res) {
           updated_at: Date.now(),
         });
         upstream = await callStore(config, refreshed.body.access_token);
-        console.log(`[salla:${id}] test-token retry status=${upstream.status}`);
+        console.log(`[salla:${id}] test-token retry status=${upstream.status} path=${buildStoreInfoUrl(config.apiBase)}`);
       }
     }
 

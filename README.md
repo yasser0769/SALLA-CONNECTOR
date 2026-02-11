@@ -6,7 +6,7 @@ Static frontend (`index.html`) + Vercel serverless functions under `/api` for Sa
 - `index.html` — UI (Connect / Test Token / Fetch Products).
 - `api/oauth/start.js` — starts OAuth redirect.
 - `api/oauth/callback.js` — handles callback and stores session cookie.
-- `api/salla/test-token.js` — verifies token against Merchant API store endpoint.
+- `api/salla/test-token.js` — verifies token against Merchant API `GET /admin/v2/store/info`.
 - `api/salla/products.js` — fetches paginated products (max 5 pages).
 - `api/salla/logout.js` — clears session cookies.
 - `api/_lib/salla.js` — shared auth/cookie/helpers.
