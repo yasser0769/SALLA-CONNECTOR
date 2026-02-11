@@ -33,7 +33,7 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
 .btn-outline:hover{border-color:var(--accent)}
 .btn:disabled{opacity:0.3;cursor:not-allowed;transform:none}
-.status{padding:12px 16px;border-radius:10px;font-size:0.78rem;margin-top:12px;display:none}
+.status{padding:12px 16px;border-radius:10px;font-size:0.78rem;margin-top:12px;display:none;direction:ltr;text-align:left}
 .status.ok{display:block;background:var(--green-dim);color:var(--green);border:1px solid rgba(52,211,153,0.2)}
 .status.err{display:block;background:var(--red-dim);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
 .status.info{display:block;background:var(--blue-dim);color:var(--blue);border:1px solid rgba(96,165,250,0.2)}
@@ -41,15 +41,13 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
 .token-box{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:monospace;font-size:0.72rem;color:var(--accent);word-break:break-all;margin-top:10px;direction:ltr;text-align:left}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .hidden{display:none!important}
-.log{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:0.72rem;color:var(--text2);max-height:200px;overflow-y:auto;font-family:monospace;line-height:1.8;direction:ltr;text-align:left;margin-top:12px}
+.log{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:0.72rem;color:var(--text2);max-height:200px;overflow-y:auto;font-family:monospace;line-height:1.8;direction:ltr;text-align:left;margin-top:12px;white-space:pre-wrap;word-break:break-all}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:16px 0}
 .st{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center}
 .st .n{font-size:1.3rem;font-weight:700;margin-bottom:2px}
 .st .l{font-size:0.66rem;color:var(--text2)}
 .prog{height:4px;background:var(--surface2);border-radius:4px;margin:12px 0;overflow:hidden}
 .prog .bar{height:100%;background:var(--accent);transition:width 0.3s;width:0;border-radius:4px}
-.step-done{opacity:0.5;pointer-events:none}
-.step-done h2::after{content:'✅';margin-right:8px}
 .sup-upload{background:var(--surface2);border:1.5px dashed var(--border);border-radius:10px;padding:20px;text-align:center;cursor:pointer;transition:all 0.2s}
 .sup-upload:hover{border-color:var(--accent);background:var(--surface3)}
 .sup-upload input{display:none}
@@ -69,7 +67,6 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
   <!-- STEP 1: Auth -->
   <div class="card" id="step1">
     <h2><span class="num">1</span> ربط المتجر</h2>
-
     <div id="authForm">
       <div class="ff">
         <label>Client ID (الرقم التعريفي)</label>
@@ -83,6 +80,7 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
       <div class="row">
         <button class="btn btn-accent" onclick="startAuth()">🔗 ربط المتجر مع سلة</button>
         <button class="btn btn-outline" onclick="toggleManual()">📋 عندي Token جاهز</button>
+        <button class="btn btn-outline" onclick="testApi()" style="font-size:0.76rem">🔧 فحص API</button>
       </div>
       <div id="manualToken" class="hidden" style="margin-top:14px">
         <div class="ff">
@@ -92,14 +90,13 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
         <button class="btn btn-green" onclick="useManualToken()">✅ استخدام التوكن</button>
       </div>
     </div>
-
     <div id="authStatus" class="status"></div>
     <div id="tokenDisplay" class="hidden">
       <div class="token-box" id="tokenText"></div>
       <div class="row" style="margin-top:8px">
         <button class="btn btn-outline" onclick="copyToken()" style="font-size:0.74rem;padding:6px 12px">📋 نسخ</button>
-        <button class="btn btn-outline" onclick="refreshToken()" style="font-size:0.74rem;padding:6px 12px">🔄 تجديد التوكن</button>
-        <button class="btn btn-red" style="font-size:0.74rem;padding:6px 12px" onclick="logout()">🚪 قطع الاتصال</button>
+        <button class="btn btn-outline" onclick="doRefreshToken()" style="font-size:0.74rem;padding:6px 12px">🔄 تجديد</button>
+        <button class="btn btn-red" style="font-size:0.74rem;padding:6px 12px" onclick="logout()">🚪 قطع</button>
       </div>
     </div>
   </div>
@@ -119,7 +116,7 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
     </div>
   </div>
 
-  <!-- STEP 3: Upload supplier & compare -->
+  <!-- STEP 3: Supplier -->
   <div class="card hidden" id="step3">
     <h2><span class="num">3</span> مقارنة مع المورد</h2>
     <div class="sup-upload" onclick="this.querySelector('input').click()" id="supZone">
@@ -129,7 +126,6 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
       <div style="font-size:0.72rem;color:var(--text3);margin-top:4px">AllFragrancesExcelList.xls</div>
       <div id="supInfo" style="font-size:0.78rem;color:var(--green);margin-top:8px"></div>
     </div>
-
     <div class="row" style="margin-top:14px;gap:8px">
       <button class="btn btn-accent" id="compareBtn" disabled onclick="compareAndUpdate()">⚡ مقارنة الأسعار والكميات</button>
       <button class="btn btn-outline hidden" id="dlBtn" onclick="downloadResults()">⬇️ تحميل XLSX</button>
@@ -146,16 +142,17 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
 </div>
 
 <script>
-// ==================== STATE ====================
 let accessToken = localStorage.getItem('salla_access_token') || '';
 let refreshTokenVal = localStorage.getItem('salla_refresh_token') || '';
-let storeProducts = []; // Pulled from API
-let supplierData = null; // From uploaded file
-const API_BASE = window.location.origin + '/api/salla';
+let storeProducts = [];
+let supplierData = null;
+let exportData = {};
+
+// API base - same origin
+const API_BASE = '/api/salla';
 
 // ==================== INIT ====================
 window.addEventListener('load', () => {
-  // Check if callback has ?code= in URL
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
   if (code) {
@@ -163,47 +160,72 @@ window.addEventListener('load', () => {
     exchangeCode(code);
     return;
   }
-  if (accessToken) {
-    showConnected();
-  }
+  if (accessToken) showConnected();
 });
 
+// ==================== HELPERS ====================
+function showStatus(id, msg, type) {
+  const el = document.getElementById(id);
+  el.className = 'status ' + type;
+  el.innerHTML = msg;
+}
+
+async function sallaApi(action, body) {
+  const resp = await fetch(API_BASE + '?action=' + action, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  // Check if response is JSON
+  const text = await resp.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('API returned non-JSON: ' + text.slice(0, 200));
+  }
+}
+
 // ==================== AUTH ====================
+async function testApi() {
+  showStatus('authStatus', '⏳ فحص الاتصال بـ API...', 'info');
+  try {
+    const resp = await fetch(API_BASE + '?action=ping');
+    const text = await resp.text();
+    try {
+      const data = JSON.parse(text);
+      showStatus('authStatus', '✅ API يعمل! Response: ' + JSON.stringify(data), 'ok');
+    } catch {
+      showStatus('authStatus', '❌ API يرجع HTML بدل JSON. تأكد من deploy صحيح.<br>Response: ' + text.slice(0, 300), 'err');
+    }
+  } catch (e) {
+    showStatus('authStatus', '❌ فشل الاتصال: ' + e.message, 'err');
+  }
+}
+
 function startAuth() {
   const clientId = document.getElementById('clientId').value.trim();
+  const clientSecret = document.getElementById('clientSecret').value.trim();
   if (!clientId) return showStatus('authStatus', 'أدخل Client ID', 'err');
-  
-  // Save credentials locally
+  if (!clientSecret) return showStatus('authStatus', 'أدخل Client Secret', 'err');
   localStorage.setItem('salla_client_id', clientId);
-  localStorage.setItem('salla_client_secret', document.getElementById('clientSecret').value.trim());
-  
+  localStorage.setItem('salla_client_secret', clientSecret);
   const redirectUri = window.location.origin + '/';
-  const authUrl = `https://accounts.salla.sa/oauth2/auth?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=offline_access`;
-  window.location.href = authUrl;
+  window.location.href = 'https://accounts.salla.sa/oauth2/auth?response_type=code&client_id=' + clientId + '&redirect_uri=' + encodeURIComponent(redirectUri) + '&scope=offline_access';
 }
 
 async function exchangeCode(code) {
   showStatus('authStatus', '⏳ جاري استبدال الكود بتوكن...', 'info');
-  const clientId = localStorage.getItem('salla_client_id') || document.getElementById('clientId').value;
-  const clientSecret = localStorage.getItem('salla_client_secret') || document.getElementById('clientSecret').value;
-  
+  const clientId = localStorage.getItem('salla_client_id');
+  const clientSecret = localStorage.getItem('salla_client_secret');
   if (!clientId || !clientSecret) {
-    showStatus('authStatus', '❌ لا يوجد Client ID / Secret — أدخلها وأعد المحاولة', 'err');
+    showStatus('authStatus', '❌ Client ID / Secret غير موجود — أدخلهم وأعد المحاولة', 'err');
     return;
   }
-
   try {
-    const resp = await fetch(API_BASE + '?action=token', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: window.location.origin + '/',
-      })
+    const data = await sallaApi('token', {
+      code, client_id: clientId, client_secret: clientSecret,
+      redirect_uri: window.location.origin + '/',
     });
-    const data = await resp.json();
     if (data.access_token) {
       accessToken = data.access_token;
       refreshTokenVal = data.refresh_token || '';
@@ -212,16 +234,14 @@ async function exchangeCode(code) {
       showStatus('authStatus', '✅ تم الربط بنجاح!', 'ok');
       showConnected();
     } else {
-      showStatus('authStatus', '❌ خطأ: ' + JSON.stringify(data), 'err');
+      showStatus('authStatus', '❌ ' + JSON.stringify(data), 'err');
     }
   } catch (e) {
-    showStatus('authStatus', '❌ خطأ في الاتصال: ' + e.message, 'err');
+    showStatus('authStatus', '❌ ' + e.message, 'err');
   }
 }
 
-function toggleManual() {
-  document.getElementById('manualToken').classList.toggle('hidden');
-}
+function toggleManual() { document.getElementById('manualToken').classList.toggle('hidden'); }
 
 function useManualToken() {
   const t = document.getElementById('manualAccessToken').value.trim();
@@ -238,20 +258,15 @@ function showConnected() {
   document.getElementById('step2').classList.remove('hidden');
 }
 
-async function refreshToken() {
+async function doRefreshToken() {
   if (!refreshTokenVal) return showStatus('authStatus', '❌ لا يوجد Refresh Token', 'err');
   showStatus('authStatus', '⏳ جاري التجديد...', 'info');
   try {
-    const resp = await fetch(API_BASE + '?action=refresh', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        refresh_token: refreshTokenVal,
-        client_id: localStorage.getItem('salla_client_id') || '',
-        client_secret: localStorage.getItem('salla_client_secret') || '',
-      })
+    const data = await sallaApi('refresh', {
+      refresh_token: refreshTokenVal,
+      client_id: localStorage.getItem('salla_client_id') || '',
+      client_secret: localStorage.getItem('salla_client_secret') || '',
     });
-    const data = await resp.json();
     if (data.access_token) {
       accessToken = data.access_token;
       refreshTokenVal = data.refresh_token || refreshTokenVal;
@@ -288,33 +303,29 @@ async function pullProducts() {
   const log = document.getElementById('pullLog');
   const prog = document.getElementById('pullProg');
   const bar = document.getElementById('pullBar');
-  log.classList.remove('hidden'); log.innerHTML = '';
+  log.classList.remove('hidden'); log.textContent = '';
   prog.classList.remove('hidden'); bar.style.width = '2%';
   document.getElementById('pullBtn').disabled = true;
 
   storeProducts = [];
-  let page = 1;
-  let totalPages = 1;
-  let totalProducts = 0;
+  let page = 1, totalPages = 1;
 
-  function plog(m) { log.innerHTML += m + '\n'; log.scrollTop = log.scrollHeight; }
+  function plog(m) { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; }
 
   try {
     while (page <= totalPages) {
-      plog(`📄 Fetching page ${page}/${totalPages}...`);
-      const resp = await fetch(API_BASE + '?action=api', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          url: `https://api.salla.dev/admin/v2/products?page=${page}&per_page=50`,
-          token: accessToken,
-        })
-      });
-      const data = await resp.json();
+      plog('📄 Fetching page ' + page + '/' + totalPages + '...');
       
+      const data = await sallaApi('api', {
+        url: 'https://api.salla.dev/admin/v2/products?page=' + page + '&per_page=50',
+        token: accessToken,
+      });
+
       if (!data.success && data.error) {
-        plog(`❌ Error: ${data.error.message || JSON.stringify(data.error)}`);
-        showStatus('authStatus', '❌ التوكن منتهي — جدده أو أعد الربط', 'err');
+        plog('❌ Salla Error: ' + (data.error.message || JSON.stringify(data.error)));
+        if (data.status === 401) {
+          showStatus('authStatus', '❌ التوكن منتهي — جدده أو أعد الربط', 'err');
+        }
         document.getElementById('pullBtn').disabled = false;
         return;
       }
@@ -325,28 +336,21 @@ async function pullProducts() {
 
       if (data.pagination) {
         totalPages = data.pagination.totalPages || 1;
-        totalProducts = data.pagination.total || 0;
       }
 
       bar.style.width = Math.round((page / totalPages) * 100) + '%';
+      plog('  ✓ Got ' + (data.data ? data.data.length : 0) + ' products (total so far: ' + storeProducts.length + ')');
       page++;
-      
-      // Small delay to avoid rate limit
-      if (page <= totalPages) await new Promise(r => setTimeout(r, 200));
+      if (page <= totalPages) await new Promise(r => setTimeout(r, 250));
     }
 
-    plog(`\n✅ Done! Fetched ${storeProducts.length} products`);
+    plog('\n✅ Done! Total: ' + storeProducts.length + ' products');
 
-    // Count stats
     let withSku = 0, withOptions = 0, totalSkus = 0;
     for (const p of storeProducts) {
       if (p.sku) withSku++;
-      if (p.skus && p.skus.length > 0) {
-        withOptions++;
-        totalSkus += p.skus.length;
-      } else if (p.sku) {
-        totalSkus++;
-      }
+      if (p.skus && p.skus.length > 0) { withOptions++; totalSkus += p.skus.length; }
+      else if (p.sku) totalSkus++;
     }
 
     document.getElementById('ps1').textContent = storeProducts.length.toLocaleString();
@@ -355,16 +359,13 @@ async function pullProducts() {
     document.getElementById('ps4').textContent = totalSkus.toLocaleString();
     document.getElementById('pullStats').classList.remove('hidden');
     document.getElementById('step3').classList.remove('hidden');
-
-    plog(`📊 Products: ${storeProducts.length} | With SKU: ${withSku} | With options: ${withOptions} | Total SKUs: ${totalSkus}`);
-
   } catch (e) {
-    plog(`❌ Error: ${e.message}`);
+    plog('❌ Error: ' + e.message);
   }
   document.getElementById('pullBtn').disabled = false;
 }
 
-// ==================== SUPPLIER FILE ====================
+// ==================== SUPPLIER ====================
 function loadSupplier(ev) {
   const f = ev.target.files[0]; if (!f) return;
   const reader = new FileReader();
@@ -372,39 +373,36 @@ function loadSupplier(ev) {
     const wb = XLSX.read(e.target.result, {type: 'array'});
     supplierData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header: 1, defval: ''});
     document.getElementById('supZone').classList.add('ok');
-    document.getElementById('supInfo').textContent = `✅ ${f.name} — ${(supplierData.length - 7).toLocaleString()} منتج`;
+    document.getElementById('supInfo').textContent = '✅ ' + f.name + ' — ' + (supplierData.length - 7).toLocaleString() + ' منتج';
     document.getElementById('compareBtn').disabled = false;
   };
   reader.readAsArrayBuffer(f);
 }
 
 // ==================== COMPARE ====================
-let exportData = [];
 function compareAndUpdate() {
   if (!storeProducts.length || !supplierData) return;
-
   const log = document.getElementById('cmpLog');
-  const prog = document.getElementById('cmpProg');
   const bar = document.getElementById('cmpBar');
-  log.classList.remove('hidden'); log.innerHTML = '';
-  prog.classList.remove('hidden'); bar.style.width = '5%';
+  document.getElementById('cmpProg').classList.remove('hidden');
+  log.classList.remove('hidden'); log.textContent = '';
+  bar.style.width = '5%';
 
-  function clog(m) { log.innerHTML += m + '\n'; log.scrollTop = log.scrollHeight; }
+  function clog(m) { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; }
 
-  // Build supplier map
+  // Supplier map
   const supMap = new Map();
   for (let i = 7; i < supplierData.length; i++) {
     const row = supplierData[i];
-    let sku = String(row[1] || '').replace(/[^\d]/g, '');
+    const sku = String(row[1] || '').replace(/[^\d]/g, '');
     if (!sku) continue;
-    let cost = parseFloat(row[7]) || 0;
-    let retail = parseFloat(row[6]) || 0;
+    const cost = parseFloat(row[7]) || 0;
+    const retail = parseFloat(row[6]) || 0;
     if (cost > 0) supMap.set(sku, {cost, retail});
   }
-  clog(`✅ Supplier: ${supMap.size} products with cost`);
+  clog('✅ Supplier: ' + supMap.size + ' products');
   bar.style.width = '20%';
 
-  // Price formula
   function calcPrice(cost) {
     const base = cost < 200 ? cost * 1.8 : cost * 1.6;
     if (base < 10) return Math.round((base + 10) * 100) / 100;
@@ -413,188 +411,97 @@ function compareAndUpdate() {
     if (base < 200) return Math.round((base + 70) * 100) / 100;
     return Math.round((base + 80) * 100) / 100;
   }
+  const r2 = v => Math.round(v * 100) / 100;
 
-  // Process products
-  exportData = [];
-  let matched = 0, priceChanged = 0, priceUp = 0, priceDown = 0;
-
-  // Build output rows for Salla prices format
-  const priceHeader1 = ['بيانات المنتج','','','','الأسعار','','','',''];
-  const priceHeader2 = ['No.','النوع','أسم المنتج','رمز المنتج sku','سعر المنتج','سعر التكلفة','السعر المخفض','تاريخ بداية التخفيض','تاريخ نهاية التخفيض'];
   const priceRows = [];
-
-  // Build output rows for Salla quantities format
-  const qtyHeader1 = ['بيانات المنتج','','','','','الكميات'];
-  const qtyHeader2 = ['No.','النوع','أسم المنتج','رمز المنتج sku','غير محدود الكمية','الكمية'];
   const qtyRows = [];
+  let matched = 0, priceChanged = 0, priceUp = 0, priceDown = 0;
 
   for (const prod of storeProducts) {
     const hasOptions = prod.skus && prod.skus.length > 0;
-    
+
     if (!hasOptions) {
-      // Simple product
       const sku = String(prod.sku || '');
       const sup = supMap.get(sku);
-      if (!sup) {
-        // Not in supplier → qty = 0
-        if (prod.quantity > 0) {
-          qtyRows.push([prod.id, 'منتج', prod.name, sku, '', 0]);
-        }
-        continue;
-      }
+      if (!sup) continue;
       matched++;
-      
-      const newCost = Math.round(sup.cost * 100) / 100;
+      const newCost = r2(sup.cost);
       const calculated = calcPrice(sup.cost);
       let newPrice, newSale = '';
-      if (sup.retail > 0 && calculated < sup.retail) {
-        newPrice = Math.round(sup.retail * 100) / 100;
-        newSale = calculated;
-      } else {
-        newPrice = calculated;
-      }
-
-      // Check price change > 2%
-      const oldEffective = prod.sale_price?.amount || prod.price?.amount || 0;
-      const newEffective = newSale || newPrice;
-      if (oldEffective > 0 && Math.abs((newEffective - oldEffective) / oldEffective) * 100 > 2) {
+      if (sup.retail > 0 && calculated < sup.retail) { newPrice = r2(sup.retail); newSale = calculated; }
+      else { newPrice = calculated; }
+      const oldEff = (prod.sale_price && prod.sale_price.amount) || (prod.price && prod.price.amount) || 0;
+      const newEff = newSale || newPrice;
+      if (oldEff > 0 && Math.abs((newEff - oldEff) / oldEff) * 100 > 2) {
         priceChanged++;
-        if (newEffective > oldEffective) priceUp++; else priceDown++;
+        if (newEff > oldEff) priceUp++; else priceDown++;
         priceRows.push([prod.id, 'منتج', prod.name, sku, newPrice, newCost, newSale, '1970-01-01', '2050-12-31']);
       }
-
-      // Qty: in supplier = 500
-      const newQty = 500;
-      if (prod.quantity !== newQty) {
-        qtyRows.push([prod.id, 'منتج', prod.name, sku, '', newQty]);
-      }
     } else {
-      // Product with options
-      let anyPriceChange = false;
-      let anyQtyChange = false;
-      const optPriceRows = [];
-      const optQtyRows = [];
-      let minOptPrice = Infinity, minOptCost = 0, minOptSale = '';
+      let anyChange = false;
+      const optRows = [];
+      let minEff = Infinity, minPrice = 0, minCost = 0, minSale = '';
 
-      for (const variant of prod.skus) {
-        const vSku = String(variant.sku || '');
+      for (const v of prod.skus) {
+        const vSku = String(v.sku || '');
         const sup = supMap.get(vSku);
-
-        if (sup) {
-          matched++;
-          const newCost = Math.round(sup.cost * 100) / 100;
-          const calculated = calcPrice(sup.cost);
-          let newPrice, newSale = '';
-          if (sup.retail > 0 && calculated < sup.retail) {
-            newPrice = Math.round(sup.retail * 100) / 100;
-            newSale = calculated;
-          } else {
-            newPrice = calculated;
-          }
-
-          // Track min for parent
-          const eff = newSale || newPrice;
-          if (eff < minOptPrice) {
-            minOptPrice = eff; minOptCost = newCost;
-            minOptSale = newSale ? newSale : '';
-            if (newSale) { /* parent gets retail as price, calculated as sale */ }
-          }
-
-          const oldEff = variant.sale_price?.amount || variant.price?.amount || 0;
-          if (oldEff > 0 && Math.abs((eff - oldEff) / oldEff) * 100 > 2) anyPriceChange = true;
-          optPriceRows.push([variant.id, 'خيار', prod.name, vSku, newPrice, newCost, newSale, '', '']);
-
-          const newQty = 500;
-          if (variant.stock_quantity !== newQty) anyQtyChange = true;
-          optQtyRows.push([variant.id, 'خيار', prod.name, vSku, '', newQty]);
-        } else {
-          // Not in supplier
-          optPriceRows.push([variant.id, 'خيار', prod.name, variant.sku || '', variant.price?.amount || 0, 0, variant.sale_price?.amount || '', '', '']);
-          if (variant.stock_quantity > 0) {
-            anyQtyChange = true;
-            optQtyRows.push([variant.id, 'خيار', prod.name, variant.sku || '', '', 0]);
-          }
-        }
+        if (!sup) continue;
+        matched++;
+        const newCost = r2(sup.cost);
+        const calculated = calcPrice(sup.cost);
+        let newPrice, newSale = '';
+        if (sup.retail > 0 && calculated < sup.retail) { newPrice = r2(sup.retail); newSale = calculated; }
+        else { newPrice = calculated; }
+        const eff = newSale || newPrice;
+        if (eff < minEff) { minEff = eff; minPrice = newPrice; minCost = newCost; minSale = newSale; }
+        const oldEff = (v.sale_price && v.sale_price.amount) || (v.price && v.price.amount) || 0;
+        if (oldEff > 0 && Math.abs((eff - oldEff) / oldEff) * 100 > 2) anyChange = true;
+        optRows.push([v.id, 'خيار', prod.name, vSku, newPrice, newCost, newSale, '', '']);
       }
 
-      if (anyPriceChange) {
+      if (anyChange && optRows.length) {
         priceChanged++;
-        if (minOptPrice !== Infinity) {
-          // Determine parent direction
-          const oldParentEff = prod.sale_price?.amount || prod.price?.amount || 0;
-          if (minOptPrice > oldParentEff) priceUp++; else priceDown++;
-        }
-        // Parent row
-        const parentPrice = minOptPrice !== Infinity ? (minOptSale ? Math.max(...optPriceRows.map(r=>r[4])) : minOptPrice) : (prod.price?.amount || 0);
-        priceRows.push([prod.id, 'منتج', prod.name, '', parentPrice, minOptCost, minOptSale, '1970-01-01', '2050-12-31']);
-        priceRows.push(...optPriceRows);
-      }
-
-      if (anyQtyChange) {
-        const parentQty = optQtyRows.reduce((s, r) => s + (r[5] || 0), 0);
-        qtyRows.push([prod.id, 'منتج', prod.name, '', '', parentQty]);
-        qtyRows.push(...optQtyRows);
+        const oldParentEff = (prod.sale_price && prod.sale_price.amount) || (prod.price && prod.price.amount) || 0;
+        if (minEff > oldParentEff) priceUp++; else priceDown++;
+        priceRows.push([prod.id, 'منتج', prod.name, '', minPrice, minCost, minSale, '1970-01-01', '2050-12-31']);
+        priceRows.push(...optRows);
       }
     }
   }
 
   bar.style.width = '90%';
-
-  clog(`\n📊 Results:`);
-  clog(`  SKU matches: ${matched}`);
-  clog(`  Price changes (>2%): ${priceChanged} (↑${priceUp} ↓${priceDown})`);
-  clog(`  Price rows for export: ${priceRows.length}`);
-  clog(`  Qty rows for export: ${qtyRows.length}`);
+  clog('\n📊 Results:');
+  clog('  SKU matches: ' + matched);
+  clog('  Price changes (>2%): ' + priceChanged + ' (↑' + priceUp + ' ↓' + priceDown + ')');
+  clog('  Export rows: ' + priceRows.length);
 
   document.getElementById('cs1').textContent = matched.toLocaleString();
   document.getElementById('cs2').textContent = priceChanged.toLocaleString();
   document.getElementById('cs3').textContent = priceUp.toLocaleString();
   document.getElementById('cs4').textContent = priceDown.toLocaleString();
   document.getElementById('cmpStats').classList.remove('hidden');
-
-  exportData = {priceHeader1, priceHeader2, priceRows, qtyHeader1, qtyHeader2, qtyRows};
   document.getElementById('dlBtn').classList.remove('hidden');
+
+  exportData = { priceRows };
   bar.style.width = '100%';
 }
 
 function downloadResults() {
   if (!exportData.priceRows) return;
-  const wb = XLSX.utils.book_new();
-
-  // Prices sheet
-  const pd = [exportData.priceHeader1, exportData.priceHeader2, ...exportData.priceRows];
-  const ws1 = XLSX.utils.aoa_to_sheet(pd);
-  ws1['!cols'] = [{wch:14},{wch:8},{wch:60},{wch:14},{wch:12},{wch:12},{wch:12},{wch:18},{wch:18}];
-  // SKU as number
+  const h1 = ['بيانات المنتج','','','','الأسعار','','','',''];
+  const h2 = ['No.','النوع','أسم المنتج','رمز المنتج sku','سعر المنتج','سعر التكلفة','السعر المخفض','تاريخ بداية التخفيض','تاريخ نهاية التخفيض'];
+  const pd = [h1, h2, ...exportData.priceRows];
+  const ws = XLSX.utils.aoa_to_sheet(pd);
+  ws['!cols'] = [{wch:14},{wch:8},{wch:60},{wch:14},{wch:12},{wch:12},{wch:12},{wch:18},{wch:18}];
   for (let r = 2; r < pd.length; r++) {
     const addr = XLSX.utils.encode_cell({r, c: 3});
     const val = pd[r][3];
-    if (val && String(val).trim()) ws1[addr] = {t:'n', v: parseInt(val)};
-    else ws1[addr] = {t:'s', v: ''};
+    if (val && String(val).trim()) ws[addr] = {t:'n', v: parseInt(val)};
+    else ws[addr] = {t:'s', v: ''};
   }
-  XLSX.utils.book_append_sheet(wb, ws1, 'Salla Product Prices Sheet');
-
-  // Quantities sheet
-  const qd = [exportData.qtyHeader1, exportData.qtyHeader2, ...exportData.qtyRows];
-  const ws2 = XLSX.utils.aoa_to_sheet(qd);
-  ws2['!cols'] = [{wch:14},{wch:8},{wch:60},{wch:14},{wch:12},{wch:10}];
-  for (let r = 2; r < qd.length; r++) {
-    const addr = XLSX.utils.encode_cell({r, c: 3});
-    const val = qd[r][3];
-    if (val && String(val).trim()) ws2[addr] = {t:'n', v: parseInt(val)};
-    else ws2[addr] = {t:'s', v: ''};
-  }
-  XLSX.utils.book_append_sheet(wb, ws2, 'Salla Product Quantities Sheet');
-
-  XLSX.writeFile(wb, `salla_update_${new Date().toISOString().slice(0,10)}.xlsx`);
-}
-
-// ==================== UTILS ====================
-function showStatus(id, msg, type) {
-  const el = document.getElementById(id);
-  el.className = 'status ' + type;
-  el.textContent = msg;
-  el.style.display = 'block';
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Salla Product Prices Sheet');
+  XLSX.writeFile(wb, 'salla_price_update_' + new Date().toISOString().slice(0,10) + '.xlsx');
 }
 </script>
 </body>
