@@ -68,31 +68,18 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
   <div class="card" id="step1">
     <h2><span class="num">1</span> ربط المتجر</h2>
     <div id="authForm">
-      <div class="ff">
-        <label>Client ID (الرقم التعريفي)</label>
-        <input id="clientId" value="bada76bf-afed-4fb4-8d91-7257f48941a5">
-      </div>
-      <div class="ff">
-        <label>Client Secret (المفتاح السري)</label>
-        <input id="clientSecret" type="password" placeholder="أدخل المفتاح السري...">
-        <div class="hint">⚠️ يبقى محلياً في متصفحك فقط — لا يُرسل لأي مكان غير سلة</div>
+      <div class="hint" style="margin-bottom:12px">
+        🔐 الربط يتم عبر OAuth الرسمي. لا تدخل Client Secret في الواجهة، يتم قراءته من Vercel Environment Variables.
       </div>
       <div class="row">
-        <button class="btn btn-accent" onclick="startAuth()">🔗 ربط المتجر مع سلة</button>
-        <button class="btn btn-outline" onclick="toggleManual()">📋 عندي Token جاهز</button>
+        <button class="btn btn-accent" onclick="startAuth()">🔗 Connect with Salla</button>
         <button class="btn btn-outline" onclick="testApi()" style="font-size:0.76rem">🔧 فحص API</button>
-      </div>
-      <div id="manualToken" class="hidden" style="margin-top:14px">
-        <div class="ff">
-          <label>Access Token</label>
-          <input id="manualAccessToken" placeholder="الصق الـ Access Token هنا...">
-        </div>
-        <button class="btn btn-green" onclick="useManualToken()">✅ استخدام التوكن</button>
       </div>
     </div>
     <div id="authStatus" class="status"></div>
     <div id="tokenDisplay" class="hidden">
       <div class="token-box" id="tokenText"></div>
+      <div class="hint" id="tokenTypeInfo" style="margin-top:6px"></div>
       <div class="row" style="margin-top:8px">
         <button class="btn btn-outline" onclick="copyToken()" style="font-size:0.74rem;padding:6px 12px">📋 نسخ</button>
         <button class="btn btn-outline" onclick="doRefreshToken()" style="font-size:0.74rem;padding:6px 12px">🔄 تجديد</button>
@@ -152,15 +139,35 @@ let exportData = {};
 const API_BASE = '/api/salla';
 
 // ==================== INIT ====================
-window.addEventListener('load', () => {
+let oauthState = localStorage.getItem('salla_oauth_state') || '';
+let oauthConfig = { client_id: '', redirect_uri: '' };
+
+window.addEventListener('load', async () => {
+  await loadOAuthConfig();
+
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
+  const state = params.get('state');
+  const error = params.get('error');
+
+  if (error) {
+    showStatus('authStatus', '❌ فشل OAuth: ' + error, 'err');
+  }
+
   if (code) {
+    if (!state || state !== oauthState) {
+      showStatus('authStatus', '❌ OAuth state غير صالح. أعد الربط.', 'err');
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
+
     window.history.replaceState({}, '', window.location.pathname);
-    exchangeCode(code);
+    await exchangeCode(code);
     return;
   }
+
   if (accessToken) showConnected();
+  else updateTokenTypeInfo();
 });
 
 // ==================== HELPERS ====================
@@ -170,18 +177,108 @@ function showStatus(id, msg, type) {
   el.innerHTML = msg;
 }
 
+function formatApiError(data, fallback) {
+  if (!data) return fallback;
+  if (typeof data.error === 'string') return data.error;
+  if (data.error && typeof data.error.message === 'string') return data.error.message;
+  if (typeof data.message === 'string') return data.message;
+  return fallback;
+}
+
+function detectTokenType(token) {
+  if (!token) return 'empty';
+  const v = String(token).trim();
+  if (!v) return 'empty';
+  if (refreshTokenVal && v === refreshTokenVal) return 'refresh';
+  if (/^whsec_/i.test(v) || /webhook/i.test(v)) return 'webhook';
+  if (/^refresh/i.test(v) || /^rt_/i.test(v)) return 'refresh';
+  if (v.length < 20) return 'invalid';
+  return 'access';
+}
+
+function tokenTypeLabel(type) {
+  if (type === 'access') return '✅ Access Token (valid for Merchant API)';
+  if (type === 'refresh') return '⚠️ Refresh Token (غير صالح لنداءات المنتجات)';
+  if (type === 'webhook') return '⚠️ Webhook Secret (ليس Access Token)';
+  if (type === 'invalid') return '⚠️ Token غير واضح / قصير';
+  return '⚠️ لا يوجد Access Token';
+}
+
+function updateTokenTypeInfo() {
+  const el = document.getElementById('tokenTypeInfo');
+  if (!el) return;
+  const type = detectTokenType(accessToken);
+  el.textContent = 'Token in use: ' + tokenTypeLabel(type);
+}
+
+function ensureValidAccessToken() {
+  const type = detectTokenType(accessToken);
+  if (type === 'empty') {
+    throw new Error('Connect first: لا يوجد Access Token');
+  }
+  if (type !== 'access') {
+    throw new Error('Not an access token: ' + tokenTypeLabel(type));
+  }
+}
+
+function randomState(size = 32) {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = new Uint8Array(size);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (const b of bytes) out += chars[b % chars.length];
+  return out;
+}
+
+async function loadOAuthConfig() {
+  try {
+    const resp = await fetch(API_BASE + '?action=config');
+    const data = await resp.json();
+    if (!resp.ok || !data.client_id || !data.redirect_uri) {
+      showStatus('authStatus', '❌ إعدادات OAuth ناقصة في Vercel Environment Variables.', 'err');
+      return;
+    }
+    oauthConfig = data;
+  } catch (e) {
+    showStatus('authStatus', '❌ تعذر تحميل إعدادات OAuth: ' + e.message, 'err');
+  }
+}
+
 async function sallaApi(action, body) {
   const resp = await fetch(API_BASE + '?action=' + action, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body || {}),
   });
-  // Check if response is JSON
+
   const text = await resp.text();
+  let data;
   try {
-    return JSON.parse(text);
+    data = JSON.parse(text);
   } catch {
     throw new Error('API returned non-JSON: ' + text.slice(0, 200));
+  }
+
+  if (!resp.ok) {
+    const error = new Error(formatApiError(data, 'HTTP ' + resp.status));
+    error.status = resp.status;
+    error.payload = data;
+    if (data && data.debug_id) error.debugId = data.debug_id;
+    throw error;
+  }
+
+  return data;
+}
+
+async function sallaApiWithAutoRefresh(action, body, retry = true) {
+  try {
+    return await sallaApi(action, body);
+  } catch (e) {
+    if (retry && action === 'api' && e.status === 401 && refreshTokenVal) {
+      await doRefreshToken(true);
+      return sallaApi(action, Object.assign({}, body, { token: accessToken }));
+    }
+    throw e;
   }
 }
 
@@ -193,7 +290,11 @@ async function testApi() {
     const text = await resp.text();
     try {
       const data = JSON.parse(text);
-      showStatus('authStatus', '✅ API يعمل! Response: ' + JSON.stringify(data), 'ok');
+      if (resp.ok && data.ok) {
+        showStatus('authStatus', '✅ API يعمل! Response: ' + JSON.stringify(data), 'ok');
+      } else {
+        showStatus('authStatus', '❌ API رد بخطأ JSON: ' + formatApiError(data, 'HTTP ' + resp.status), 'err');
+      }
     } catch {
       showStatus('authStatus', '❌ API يرجع HTML بدل JSON. تأكد من deploy صحيح.<br>Response: ' + text.slice(0, 300), 'err');
     }
@@ -203,83 +304,75 @@ async function testApi() {
 }
 
 function startAuth() {
-  const clientId = document.getElementById('clientId').value.trim();
-  const clientSecret = document.getElementById('clientSecret').value.trim();
-  if (!clientId) return showStatus('authStatus', 'أدخل Client ID', 'err');
-  if (!clientSecret) return showStatus('authStatus', 'أدخل Client Secret', 'err');
-  localStorage.setItem('salla_client_id', clientId);
-  localStorage.setItem('salla_client_secret', clientSecret);
-  const redirectUri = window.location.origin + '/';
-  window.location.href = 'https://accounts.salla.sa/oauth2/auth?response_type=code&client_id=' + clientId + '&redirect_uri=' + encodeURIComponent(redirectUri) + '&scope=offline_access';
+  if (!oauthConfig.client_id || !oauthConfig.redirect_uri) {
+    showStatus('authStatus', '❌ إعدادات OAuth غير جاهزة. تأكد من SALLA_CLIENT_ID و SALLA_REDIRECT_URI.', 'err');
+    return;
+  }
+
+  oauthState = randomState();
+  localStorage.setItem('salla_oauth_state', oauthState);
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: oauthConfig.client_id,
+    redirect_uri: oauthConfig.redirect_uri,
+    scope: 'offline_access',
+    state: oauthState,
+  });
+
+  window.location.href = 'https://accounts.salla.sa/oauth2/auth?' + params.toString();
 }
 
 async function exchangeCode(code) {
   showStatus('authStatus', '⏳ جاري استبدال الكود بتوكن...', 'info');
-  const clientId = localStorage.getItem('salla_client_id');
-  const clientSecret = localStorage.getItem('salla_client_secret');
-  if (!clientId || !clientSecret) {
-    showStatus('authStatus', '❌ Client ID / Secret غير موجود — أدخلهم وأعد المحاولة', 'err');
-    return;
-  }
   try {
-    const data = await sallaApi('token', {
-      code, client_id: clientId, client_secret: clientSecret,
-      redirect_uri: window.location.origin + '/',
-    });
+    const data = await sallaApi('token', { code });
     if (data.access_token) {
       accessToken = data.access_token;
       refreshTokenVal = data.refresh_token || '';
-      localStorage.setItem('salla_access_token', accessToken);
-      localStorage.setItem('salla_refresh_token', refreshTokenVal);
-      showStatus('authStatus', '✅ تم الربط بنجاح!', 'ok');
+      localStorage.setItem('salla_access_token', data.access_token);
+      localStorage.setItem('salla_refresh_token', data.refresh_token || '');
+      showStatus('authStatus', '✅ تم الربط بنجاح والحصول على Access Token حقيقي.', 'ok');
       showConnected();
-    } else {
-      showStatus('authStatus', '❌ ' + JSON.stringify(data), 'err');
+      return;
     }
+    showStatus('authStatus', '❌ ' + formatApiError(data, JSON.stringify(data)), 'err');
   } catch (e) {
     showStatus('authStatus', '❌ ' + e.message, 'err');
   }
-}
-
-function toggleManual() { document.getElementById('manualToken').classList.toggle('hidden'); }
-
-function useManualToken() {
-  const t = document.getElementById('manualAccessToken').value.trim();
-  if (!t) return;
-  accessToken = t;
-  localStorage.setItem('salla_access_token', t);
-  showStatus('authStatus', '✅ تم حفظ التوكن!', 'ok');
-  showConnected();
 }
 
 function showConnected() {
   document.getElementById('tokenDisplay').classList.remove('hidden');
   document.getElementById('tokenText').textContent = accessToken.slice(0, 20) + '...' + accessToken.slice(-10);
   document.getElementById('step2').classList.remove('hidden');
+  updateTokenTypeInfo();
 }
 
-async function doRefreshToken() {
-  if (!refreshTokenVal) return showStatus('authStatus', '❌ لا يوجد Refresh Token', 'err');
-  showStatus('authStatus', '⏳ جاري التجديد...', 'info');
-  try {
-    const data = await sallaApi('refresh', {
-      refresh_token: refreshTokenVal,
-      client_id: localStorage.getItem('salla_client_id') || '',
-      client_secret: localStorage.getItem('salla_client_secret') || '',
-    });
-    if (data.access_token) {
-      accessToken = data.access_token;
-      refreshTokenVal = data.refresh_token || refreshTokenVal;
-      localStorage.setItem('salla_access_token', accessToken);
-      localStorage.setItem('salla_refresh_token', refreshTokenVal);
-      showStatus('authStatus', '✅ تم تجديد التوكن!', 'ok');
-      document.getElementById('tokenText').textContent = accessToken.slice(0, 20) + '...' + accessToken.slice(-10);
-    } else {
-      showStatus('authStatus', '❌ ' + JSON.stringify(data), 'err');
-    }
-  } catch (e) {
-    showStatus('authStatus', '❌ ' + e.message, 'err');
+async function doRefreshToken(silent = false) {
+  if (!refreshTokenVal) {
+    if (!silent) showStatus('authStatus', '❌ لا يوجد Refresh Token', 'err');
+    throw new Error('No refresh token');
   }
+
+  if (!silent) showStatus('authStatus', '⏳ جاري تجديد Access Token...', 'info');
+
+  const data = await sallaApi('refresh', {
+    refresh_token: refreshTokenVal,
+  });
+
+  if (!data.access_token) {
+    throw new Error(formatApiError(data, 'Refresh failed'));
+  }
+
+  accessToken = data.access_token;
+  refreshTokenVal = data.refresh_token || refreshTokenVal;
+  localStorage.setItem('salla_access_token', accessToken);
+  localStorage.setItem('salla_refresh_token', refreshTokenVal);
+  if (!silent) showStatus('authStatus', '✅ تم تجديد التوكن!', 'ok');
+  const tokenText = document.getElementById('tokenText');
+  if (tokenText) tokenText.textContent = accessToken.slice(0, 20) + '...' + accessToken.slice(-10);
+  return data;
 }
 
 function copyToken() {
@@ -292,10 +385,12 @@ function logout() {
   accessToken = ''; refreshTokenVal = '';
   localStorage.removeItem('salla_access_token');
   localStorage.removeItem('salla_refresh_token');
+  localStorage.removeItem('salla_oauth_state');
   document.getElementById('tokenDisplay').classList.add('hidden');
   document.getElementById('step2').classList.add('hidden');
   document.getElementById('step3').classList.add('hidden');
   showStatus('authStatus', 'تم قطع الاتصال', 'warn');
+  updateTokenTypeInfo();
 }
 
 // ==================== PULL PRODUCTS ====================
@@ -304,47 +399,43 @@ async function pullProducts() {
   const prog = document.getElementById('pullProg');
   const bar = document.getElementById('pullBar');
   log.classList.remove('hidden'); log.textContent = '';
-  prog.classList.remove('hidden'); bar.style.width = '2%';
+  prog.classList.remove('hidden'); bar.style.width = '5%';
   document.getElementById('pullBtn').disabled = true;
 
   storeProducts = [];
-  let page = 1, totalPages = 1;
 
   function plog(m) { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; }
 
   try {
-    while (page <= totalPages) {
-      plog('📄 Fetching page ' + page + '/' + totalPages + '...');
-      
-      const data = await sallaApi('api', {
-        url: 'https://api.salla.dev/admin/v2/products?page=' + page + '&per_page=50',
-        token: accessToken,
-      });
+    ensureValidAccessToken();
+    updateTokenTypeInfo();
+    plog('📄 Fetching products from Salla...');
+    const data = await sallaApi('api', {
+      url: 'https://api.salla.dev/admin/v2/products?page=1',
+      method: 'GET',
+      token: accessToken,
+      refresh_token: refreshTokenVal || '',
+      paginate: true,
+    });
 
-      if (!data.success && data.error) {
-        plog('❌ Salla Error: ' + (data.error.message || JSON.stringify(data.error)));
-        if (data.status === 401) {
-          showStatus('authStatus', '❌ التوكن منتهي — جدده أو أعد الربط', 'err');
-        }
-        document.getElementById('pullBtn').disabled = false;
-        return;
+    if (data.refreshed_access_token) {
+      accessToken = data.refreshed_access_token;
+      localStorage.setItem('salla_access_token', accessToken);
+      if (data.refreshed_refresh_token) {
+        refreshTokenVal = data.refreshed_refresh_token;
+        localStorage.setItem('salla_refresh_token', refreshTokenVal);
       }
-
-      if (data.data && Array.isArray(data.data)) {
-        storeProducts.push(...data.data);
-      }
-
-      if (data.pagination) {
-        totalPages = data.pagination.totalPages || 1;
-      }
-
-      bar.style.width = Math.round((page / totalPages) * 100) + '%';
-      plog('  ✓ Got ' + (data.data ? data.data.length : 0) + ' products (total so far: ' + storeProducts.length + ')');
-      page++;
-      if (page <= totalPages) await new Promise(r => setTimeout(r, 250));
+      showStatus('authStatus', '✅ تم تجديد Access Token تلقائياً أثناء السحب.', 'ok');
+      updateTokenTypeInfo();
     }
 
-    plog('\n✅ Done! Total: ' + storeProducts.length + ' products');
+    if (!data || !Array.isArray(data.data)) {
+      throw new Error(formatApiError(data, 'Invalid products response') + (data && data.debug_id ? ' (debug_id: ' + data.debug_id + ')' : ''));
+    }
+
+    storeProducts = data.data;
+    bar.style.width = '100%';
+    plog('✅ Done! Total: ' + storeProducts.length + ' products');
 
     let withSku = 0, withOptions = 0, totalSkus = 0;
     for (const p of storeProducts) {
@@ -360,7 +451,9 @@ async function pullProducts() {
     document.getElementById('pullStats').classList.remove('hidden');
     document.getElementById('step3').classList.remove('hidden');
   } catch (e) {
-    plog('❌ Error: ' + e.message);
+    const dbg = e.debugId ? ' (debug_id: ' + e.debugId + ')' : '';
+    plog('❌ Error: ' + e.message + dbg);
+    showStatus('authStatus', '❌ فشل سحب المنتجات: ' + e.message + dbg, 'err');
   }
   document.getElementById('pullBtn').disabled = false;
 }
