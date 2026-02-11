@@ -79,6 +79,7 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
     <div id="authStatus" class="status"></div>
     <div id="tokenDisplay" class="hidden">
       <div class="token-box" id="tokenText"></div>
+      <div class="hint" id="tokenTypeInfo" style="margin-top:6px"></div>
       <div class="row" style="margin-top:8px">
         <button class="btn btn-outline" onclick="copyToken()" style="font-size:0.74rem;padding:6px 12px">📋 نسخ</button>
         <button class="btn btn-outline" onclick="doRefreshToken()" style="font-size:0.74rem;padding:6px 12px">🔄 تجديد</button>
@@ -166,6 +167,7 @@ window.addEventListener('load', async () => {
   }
 
   if (accessToken) showConnected();
+  else updateTokenTypeInfo();
 });
 
 // ==================== HELPERS ====================
@@ -181,6 +183,42 @@ function formatApiError(data, fallback) {
   if (data.error && typeof data.error.message === 'string') return data.error.message;
   if (typeof data.message === 'string') return data.message;
   return fallback;
+}
+
+function detectTokenType(token) {
+  if (!token) return 'empty';
+  const v = String(token).trim();
+  if (!v) return 'empty';
+  if (refreshTokenVal && v === refreshTokenVal) return 'refresh';
+  if (/^whsec_/i.test(v) || /webhook/i.test(v)) return 'webhook';
+  if (/^refresh/i.test(v) || /^rt_/i.test(v)) return 'refresh';
+  if (v.length < 20) return 'invalid';
+  return 'access';
+}
+
+function tokenTypeLabel(type) {
+  if (type === 'access') return '✅ Access Token (valid for Merchant API)';
+  if (type === 'refresh') return '⚠️ Refresh Token (غير صالح لنداءات المنتجات)';
+  if (type === 'webhook') return '⚠️ Webhook Secret (ليس Access Token)';
+  if (type === 'invalid') return '⚠️ Token غير واضح / قصير';
+  return '⚠️ لا يوجد Access Token';
+}
+
+function updateTokenTypeInfo() {
+  const el = document.getElementById('tokenTypeInfo');
+  if (!el) return;
+  const type = detectTokenType(accessToken);
+  el.textContent = 'Token in use: ' + tokenTypeLabel(type);
+}
+
+function ensureValidAccessToken() {
+  const type = detectTokenType(accessToken);
+  if (type === 'empty') {
+    throw new Error('Connect first: لا يوجد Access Token');
+  }
+  if (type !== 'access') {
+    throw new Error('Not an access token: ' + tokenTypeLabel(type));
+  }
 }
 
 function randomState(size = 32) {
@@ -225,6 +263,7 @@ async function sallaApi(action, body) {
     const error = new Error(formatApiError(data, 'HTTP ' + resp.status));
     error.status = resp.status;
     error.payload = data;
+    if (data && data.debug_id) error.debugId = data.debug_id;
     throw error;
   }
 
@@ -291,8 +330,8 @@ async function exchangeCode(code) {
     if (data.access_token) {
       accessToken = data.access_token;
       refreshTokenVal = data.refresh_token || '';
-      localStorage.setItem('salla_access_token', accessToken);
-      localStorage.setItem('salla_refresh_token', refreshTokenVal);
+      localStorage.setItem('salla_access_token', data.access_token);
+      localStorage.setItem('salla_refresh_token', data.refresh_token || '');
       showStatus('authStatus', '✅ تم الربط بنجاح والحصول على Access Token حقيقي.', 'ok');
       showConnected();
       return;
@@ -307,6 +346,7 @@ function showConnected() {
   document.getElementById('tokenDisplay').classList.remove('hidden');
   document.getElementById('tokenText').textContent = accessToken.slice(0, 20) + '...' + accessToken.slice(-10);
   document.getElementById('step2').classList.remove('hidden');
+  updateTokenTypeInfo();
 }
 
 async function doRefreshToken(silent = false) {
@@ -350,6 +390,7 @@ function logout() {
   document.getElementById('step2').classList.add('hidden');
   document.getElementById('step3').classList.add('hidden');
   showStatus('authStatus', 'تم قطع الاتصال', 'warn');
+  updateTokenTypeInfo();
 }
 
 // ==================== PULL PRODUCTS ====================
@@ -366,16 +407,30 @@ async function pullProducts() {
   function plog(m) { log.textContent += m + '\\n'; log.scrollTop = log.scrollHeight; }
 
   try {
+    ensureValidAccessToken();
+    updateTokenTypeInfo();
     plog('📄 Fetching products from Salla...');
-    const data = await sallaApiWithAutoRefresh('api', {
+    const data = await sallaApi('api', {
       url: 'https://api.salla.dev/admin/v2/products?page=1',
       method: 'GET',
       token: accessToken,
+      refresh_token: refreshTokenVal || '',
       paginate: true,
     });
 
+    if (data.refreshed_access_token) {
+      accessToken = data.refreshed_access_token;
+      localStorage.setItem('salla_access_token', accessToken);
+      if (data.refreshed_refresh_token) {
+        refreshTokenVal = data.refreshed_refresh_token;
+        localStorage.setItem('salla_refresh_token', refreshTokenVal);
+      }
+      showStatus('authStatus', '✅ تم تجديد Access Token تلقائياً أثناء السحب.', 'ok');
+      updateTokenTypeInfo();
+    }
+
     if (!data || !Array.isArray(data.data)) {
-      throw new Error(formatApiError(data, 'Invalid products response'));
+      throw new Error(formatApiError(data, 'Invalid products response') + (data && data.debug_id ? ' (debug_id: ' + data.debug_id + ')' : ''));
     }
 
     storeProducts = data.data;
@@ -396,8 +451,9 @@ async function pullProducts() {
     document.getElementById('pullStats').classList.remove('hidden');
     document.getElementById('step3').classList.remove('hidden');
   } catch (e) {
-    plog('❌ Error: ' + e.message);
-    showStatus('authStatus', '❌ فشل سحب المنتجات: ' + e.message, 'err');
+    const dbg = e.debugId ? ' (debug_id: ' + e.debugId + ')' : '';
+    plog('❌ Error: ' + e.message + dbg);
+    showStatus('authStatus', '❌ فشل سحب المنتجات: ' + e.message + dbg, 'err');
   }
   document.getElementById('pullBtn').disabled = false;
 }

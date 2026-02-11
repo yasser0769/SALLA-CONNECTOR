@@ -30,3 +30,9 @@ Expected response (JSON):
 ## Security note
 - Do **not** put Client Secret in frontend code.
 - If secrets were exposed previously, rotate them immediately and update Vercel env vars.
+
+## 4) Token safety + debugging
+- The UI labels the token currently used (Access / Refresh / Webhook Secret).
+- API calls are blocked if token is empty or appears to be a refresh/webhook secret.
+- Backend responses include `debug_id` for easier tracing in **Vercel Runtime Logs**.
+- On 401 from Salla Merchant API, backend attempts one automatic refresh using `refresh_token`, then retries once.

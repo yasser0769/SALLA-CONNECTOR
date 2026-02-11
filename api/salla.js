@@ -35,6 +35,14 @@ function toFormUrlEncoded(payload) {
   return new URLSearchParams(payload).toString();
 }
 
+function newDebugId() {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+function logDebug(debugId, message, extra) {
+  console.log(`[salla:${debugId}] ${message}`, extra || '');
+}
+
 async function parseUpstreamResponse(resp) {
   const raw = await resp.text();
   try {
@@ -48,6 +56,19 @@ async function parseUpstreamResponse(resp) {
       },
     };
   }
+}
+
+async function requestTokenByGrant(config, payload) {
+  const formBody = toFormUrlEncoded(payload);
+  const resp = await fetch('https://accounts.salla.sa/oauth2/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: formBody,
+  });
+  return parseUpstreamResponse(resp);
 }
 
 function getNextUrlFromResponse(url, data) {
@@ -92,13 +113,15 @@ module.exports = async function handler(req, res) {
     return res.status(200).end();
   }
 
+  const debugId = newDebugId();
+
   try {
     const action = req.query && req.query.action;
     const body = parseBody(req);
     const config = envConfig();
 
     if (action === 'ping') {
-      return sendJson(res, 200, { ok: true, time: new Date().toISOString() });
+      return sendJson(res, 200, { ok: true, time: new Date().toISOString(), debug_id: debugId });
     }
 
     if (action === 'config') {
@@ -106,19 +129,23 @@ module.exports = async function handler(req, res) {
         ok: true,
         client_id: config.clientId || null,
         redirect_uri: config.redirectUri || null,
+        debug_id: debugId,
       });
     }
 
     if (action === 'token') {
       const code = body.code;
       if (!code) {
-        return sendJson(res, 400, { error: 'Missing required field: code' });
+        return sendJson(res, 400, { error: 'Missing required field: code', debug_id: debugId });
       }
       if (!config.clientId || !config.clientSecret || !config.redirectUri) {
-        return sendJson(res, 500, { error: 'Missing SALLA_CLIENT_ID/SALLA_CLIENT_SECRET/SALLA_REDIRECT_URI in env' });
+        return sendJson(res, 500, {
+          error: 'Missing SALLA_CLIENT_ID/SALLA_CLIENT_SECRET/SALLA_REDIRECT_URI in env',
+          debug_id: debugId,
+        });
       }
 
-      const formBody = toFormUrlEncoded({
+      const parsed = await requestTokenByGrant(config, {
         grant_type: 'authorization_code',
         client_id: config.clientId,
         client_secret: config.clientSecret,
@@ -127,29 +154,23 @@ module.exports = async function handler(req, res) {
         scope: 'offline_access',
       });
 
-      const resp = await fetch('https://accounts.salla.sa/oauth2/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'application/json',
-        },
-        body: formBody,
-      });
-
-      const parsed = await parseUpstreamResponse(resp);
-      return sendJson(res, parsed.status, parsed.data);
+      logDebug(debugId, 'oauth token exchange', { status: parsed.status });
+      return sendJson(res, parsed.status, Object.assign({}, parsed.data, { debug_id: debugId }));
     }
 
     if (action === 'refresh') {
       const refreshToken = body.refresh_token;
       if (!refreshToken) {
-        return sendJson(res, 400, { error: 'Missing required field: refresh_token' });
+        return sendJson(res, 400, { error: 'Missing required field: refresh_token', debug_id: debugId });
       }
       if (!config.clientId || !config.clientSecret || !config.redirectUri) {
-        return sendJson(res, 500, { error: 'Missing SALLA_CLIENT_ID/SALLA_CLIENT_SECRET/SALLA_REDIRECT_URI in env' });
+        return sendJson(res, 500, {
+          error: 'Missing SALLA_CLIENT_ID/SALLA_CLIENT_SECRET/SALLA_REDIRECT_URI in env',
+          debug_id: debugId,
+        });
       }
 
-      const formBody = toFormUrlEncoded({
+      const parsed = await requestTokenByGrant(config, {
         grant_type: 'refresh_token',
         client_id: config.clientId,
         client_secret: config.clientSecret,
@@ -158,17 +179,8 @@ module.exports = async function handler(req, res) {
         scope: 'offline_access',
       });
 
-      const resp = await fetch('https://accounts.salla.sa/oauth2/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'application/json',
-        },
-        body: formBody,
-      });
-
-      const parsed = await parseUpstreamResponse(resp);
-      return sendJson(res, parsed.status, parsed.data);
+      logDebug(debugId, 'oauth refresh exchange', { status: parsed.status });
+      return sendJson(res, parsed.status, Object.assign({}, parsed.data, { debug_id: debugId }));
     }
 
     if (action === 'api') {
@@ -177,67 +189,126 @@ module.exports = async function handler(req, res) {
       const token = body.token;
       const requestBody = body.body;
       const paginate = body.paginate !== false;
+      const refreshToken = body.refresh_token;
 
       if (!url || !token) {
-        return sendJson(res, 400, { error: 'Missing url or token' });
+        return sendJson(res, 400, { error: 'Missing url or token', debug_id: debugId });
       }
 
-      if (method === 'GET' && paginate) {
-        let currentUrl = url;
-        let pageCount = 0;
-        const maxPages = 50;
-        const combinedData = [];
-        let lastPayload = null;
-        let lastStatus = 200;
+      async function executeWithToken(currentToken) {
+        if (method === 'GET' && paginate) {
+          let currentUrl = url;
+          let pageCount = 0;
+          const maxPages = 50;
+          const combinedData = [];
+          let lastPayload = null;
+          let lastStatus = 200;
 
-        while (currentUrl && pageCount < maxPages) {
-          const resp = await proxySallaRequest({
-            url: currentUrl,
-            method,
-            token,
-            requestBody,
+          while (currentUrl && pageCount < maxPages) {
+            logDebug(debugId, 'proxy request', { url: currentUrl, method });
+            const resp = await proxySallaRequest({
+              url: currentUrl,
+              method,
+              token: currentToken,
+              requestBody,
+            });
+            const parsed = await parseUpstreamResponse(resp);
+            logDebug(debugId, 'proxy response', { status: parsed.status, url: currentUrl });
+            lastStatus = parsed.status;
+            lastPayload = parsed.data;
+
+            if (parsed.status >= 400) {
+              return { failed: true, status: parsed.status, payload: parsed.data };
+            }
+
+            if (Array.isArray(parsed.data && parsed.data.data)) {
+              combinedData.push(...parsed.data.data);
+            }
+
+            pageCount += 1;
+            currentUrl = getNextUrlFromResponse(currentUrl, parsed.data);
+          }
+
+          const pagination = Object.assign({}, (lastPayload && lastPayload.pagination) || {}, {
+            combinedCount: combinedData.length,
+            pagesFetched: pageCount,
+            hasMore: Boolean(currentUrl),
           });
-          const parsed = await parseUpstreamResponse(resp);
-          lastStatus = parsed.status;
-          lastPayload = parsed.data;
 
-          if (parsed.status >= 400) {
-            return sendJson(res, parsed.status, parsed.data);
-          }
-
-          if (Array.isArray(parsed.data && parsed.data.data)) {
-            combinedData.push(...parsed.data.data);
-          }
-
-          pageCount += 1;
-          currentUrl = getNextUrlFromResponse(currentUrl, parsed.data);
+          return {
+            failed: false,
+            status: lastStatus,
+            payload: {
+              success: true,
+              data: combinedData,
+              pagination,
+            },
+          };
         }
 
-        const pagination = Object.assign({}, (lastPayload && lastPayload.pagination) || {}, {
-          combinedCount: combinedData.length,
-          pagesFetched: pageCount,
-          hasMore: Boolean(currentUrl),
+        logDebug(debugId, 'proxy request', { url, method });
+        const resp = await proxySallaRequest({
+          url,
+          method,
+          token: currentToken,
+          requestBody,
         });
+        const parsed = await parseUpstreamResponse(resp);
+        logDebug(debugId, 'proxy response', { status: parsed.status, url });
+        if (parsed.status >= 400) {
+          return { failed: true, status: parsed.status, payload: parsed.data };
+        }
 
-        return sendJson(res, lastStatus, {
-          success: true,
-          data: combinedData,
-          pagination,
-        });
+        return { failed: false, status: parsed.status, payload: parsed.data };
       }
 
-      const resp = await proxySallaRequest({
-        url,
-        method,
-        token,
-        requestBody,
-      });
-      const parsed = await parseUpstreamResponse(resp);
-      return sendJson(res, parsed.status, parsed.data);
+      const firstTry = await executeWithToken(token);
+      if (!firstTry.failed) {
+        return sendJson(res, firstTry.status, Object.assign({}, firstTry.payload, { debug_id: debugId }));
+      }
+
+      if (firstTry.status === 401 && refreshToken && config.clientId && config.clientSecret && config.redirectUri) {
+        const refreshParsed = await requestTokenByGrant(config, {
+          grant_type: 'refresh_token',
+          client_id: config.clientId,
+          client_secret: config.clientSecret,
+          refresh_token: refreshToken,
+          redirect_uri: config.redirectUri,
+          scope: 'offline_access',
+        });
+        logDebug(debugId, 'proxy auto-refresh attempt', { status: refreshParsed.status });
+
+        if (refreshParsed.status < 400 && refreshParsed.data && refreshParsed.data.access_token) {
+          const retry = await executeWithToken(refreshParsed.data.access_token);
+          if (!retry.failed) {
+            return sendJson(res, retry.status, Object.assign({}, retry.payload, {
+              debug_id: debugId,
+              refreshed_access_token: refreshParsed.data.access_token,
+              refreshed_refresh_token: refreshParsed.data.refresh_token || null,
+            }));
+          }
+          return sendJson(res, retry.status, Object.assign({}, retry.payload, {
+            debug_id: debugId,
+            refresh_attempted: true,
+          }));
+        }
+
+        return sendJson(res, firstTry.status, Object.assign({}, firstTry.payload, {
+          debug_id: debugId,
+          refresh_attempted: true,
+          refresh_error: refreshParsed.data,
+        }));
+      }
+
+      return sendJson(res, firstTry.status, Object.assign({}, firstTry.payload, { debug_id: debugId }));
     }
 
-    return sendJson(res, 400, { error: 'Unknown action. Use: ping, config, token, refresh, api' });
+    return sendJson(res, 400, {
+      error: 'Unknown action. Use: ping, config, token, refresh, api',
+      debug_id: debugId,
+    });
   } catch (error) {
-    return sendJson(res, 500, { error: error.message || 'Unexpected server error' });
+    logDebug(debugId, 'handler crash', { message: error.message });
+    return sendJson(res, 500, { error: error.message || 'Unexpected server error', debug_id: debugId });
   }
 };
