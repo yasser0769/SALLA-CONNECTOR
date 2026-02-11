@@ -1,38 +1,54 @@
-# SALLA-CONNECTOR
+# salla-connector
 
-Static `index.html` + Vercel Function `api/salla.js` for Salla OAuth and product fetching.
+Static frontend (`index.html`) + Vercel serverless functions under `/api` for Salla OAuth + Merchant API.
 
-## 1) Vercel Environment Variables
-Set these in **Vercel → Project Settings → Environment Variables**:
+## File structure
+- `index.html` — UI (Connect / Test Token / Fetch Products).
+- `api/oauth/start.js` — starts OAuth redirect.
+- `api/oauth/callback.js` — handles callback and stores session cookie.
+- `api/salla/test-token.js` — verifies token against Merchant API store endpoint.
+- `api/salla/products.js` — fetches paginated products (max 5 pages).
+- `api/salla/logout.js` — clears session cookies.
+- `api/_lib/salla.js` — shared auth/cookie/helpers.
+
+## 1) Configure Salla Partner Portal
+Set Callback URL to **exactly**:
+
+`https://YOUR_DOMAIN/api/oauth/callback`
+
+It must match `SALLA_REDIRECT_URI` exactly.
+
+## 2) Configure Vercel Environment Variables
+Set these values in Vercel Project Settings:
 - `SALLA_CLIENT_ID`
 - `SALLA_CLIENT_SECRET`
 - `SALLA_REDIRECT_URI`
+- `APP_SESSION_SECRET` (long random value)
 
-> Important: Configure the callback URL in Salla Partner Portal to match `SALLA_REDIRECT_URI` **exactly**.
+Optional:
+- `SALLA_API_BASE` (default `https://api.salla.dev`)
+- `SALLA_ACCOUNTS_BASE` (default `https://accounts.salla.sa`)
 
-## 2) Quick health test
-After deploy, open:
-- `/api/salla?action=ping`
+## 3) How OAuth works now
+1. Click **Connect with Salla**.
+2. Browser goes to `/api/oauth/start`.
+3. User authorizes on Salla.
+4. Salla redirects to `/api/oauth/callback?code=...&state=...`.
+5. Backend exchanges code using `x-www-form-urlencoded`.
+6. Backend stores `access_token` + `refresh_token` in signed **HttpOnly** cookie.
 
-Expected response (JSON):
-```json
-{ "ok": true, "time": "..." }
-```
+No `client_secret` is ever exposed to frontend JS.
 
-## 3) OAuth + Fetch flow
-1. Open the app and click **Connect with Salla**.
-2. Salla redirects back with `?code=...`.
-3. Frontend calls `POST /api/salla?action=token` with `{ code }`.
-4. Backend exchanges code using server-side env vars and stores `access_token` + `refresh_token` in browser localStorage.
-5. Click **Fetch Products** to load products from `https://api.salla.dev/admin/v2/products?page=1`.
-6. If access token expires, refresh is triggered automatically using `refresh_token`.
+## 4) Diagnostics and testing
+- Ping: `/api/salla?action=ping`
+- Token validity: click **Test Token** (calls `/api/salla/test-token`).
+- Products: click **Fetch Products** (calls `/api/salla/products`).
 
-## Security note
-- Do **not** put Client Secret in frontend code.
-- If secrets were exposed previously, rotate them immediately and update Vercel env vars.
+If Merchant API fails, UI displays upstream status + `debug_id` so you can inspect Vercel Runtime Logs.
 
-## 4) Token safety + debugging
-- The UI labels the token currently used (Access / Refresh / Webhook Secret).
-- API calls are blocked if token is empty or appears to be a refresh/webhook secret.
-- Backend responses include `debug_id` for easier tracing in **Vercel Runtime Logs**.
-- On 401 from Salla Merchant API, backend attempts one automatic refresh using `refresh_token`, then retries once.
+## 5) Refresh behavior
+When Merchant API returns 401/403, backend tries refresh token once, updates session cookie, and retries the request once.
+
+## Security notes
+- Keep `APP_SESSION_SECRET` long and private.
+- Rotate Salla secrets if they were ever exposed.
