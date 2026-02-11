@@ -212,6 +212,32 @@ async function testToken() {
   } catch (e) {
     showStatus('authStatus', '❌ ' + e.message, 'err');
   }
+
+  if (!silent) showStatus('authStatus', '⏳ جاري تجديد Access Token...', 'info');
+
+  const data = await sallaApi('refresh', {
+    refresh_token: refreshTokenVal,
+  });
+
+  if (!data.access_token) {
+    throw new Error(formatApiError(data, 'Refresh failed'));
+  }
+
+  accessToken = data.access_token;
+  refreshTokenVal = data.refresh_token || refreshTokenVal;
+  localStorage.setItem('salla_access_token', accessToken);
+  localStorage.setItem('salla_refresh_token', refreshTokenVal);
+  if (!silent) showStatus('authStatus', '✅ تم تجديد التوكن!', 'ok');
+  const tokenText = document.getElementById('tokenText');
+  if (tokenText) tokenText.textContent = accessToken.slice(0, 20) + '...' + accessToken.slice(-10);
+  return data;
+}
+
+async function logout() {
+  await fetch(API_BASE + '/salla/logout');
+  document.getElementById('step2').classList.add('hidden');
+  document.getElementById('step3').classList.add('hidden');
+  showStatus('authStatus', 'تم تسجيل الخروج من الجلسة.', 'warn');
 }
 
 async function logout() {
