@@ -1,21 +1,32 @@
 # SALLA-CONNECTOR
 
-واجهة HTML ثابتة + Vercel Serverless API endpoint على `/api/salla` للتكامل مع OAuth وSalla API.
+Static `index.html` + Vercel Function `api/salla.js` for Salla OAuth and product fetching.
 
-## Quick test
-1. بعد النشر، افتح:
-   - `/api/salla?action=ping`
-2. يجب أن تحصل على JSON مثل:
-   - `{ "ok": true, "time": "..." }`
+## 1) Vercel Environment Variables
+Set these in **Vercel → Project Settings → Environment Variables**:
+- `SALLA_CLIENT_ID`
+- `SALLA_CLIENT_SECRET`
+- `SALLA_REDIRECT_URI`
 
-## Vercel deploy
-1. ارفع المشروع إلى GitHub.
-2. اربط المستودع مع Vercel (Framework Preset: **Other**).
-3. أضف Environment Variables (مفضّل للأمان):
-   - `SALLA_CLIENT_ID`
-   - `SALLA_CLIENT_SECRET`
-   - `SALLA_REDIRECT_URI`
-4. نفّذ Deploy.
+> Important: Configure the callback URL in Salla Partner Portal to match `SALLA_REDIRECT_URI` **exactly**.
 
-## ملاحظة أمنية
-إذا سبق وتم نشر أي Client Secret أو Webhook Secret علناً، قم بعمل **Rotate** لها فوراً من لوحة سلة/مزود الخدمة ثم حدّث القيم في Vercel Environment Variables.
+## 2) Quick health test
+After deploy, open:
+- `/api/salla?action=ping`
+
+Expected response (JSON):
+```json
+{ "ok": true, "time": "..." }
+```
+
+## 3) OAuth + Fetch flow
+1. Open the app and click **Connect with Salla**.
+2. Salla redirects back with `?code=...`.
+3. Frontend calls `POST /api/salla?action=token` with `{ code }`.
+4. Backend exchanges code using server-side env vars and stores `access_token` + `refresh_token` in browser localStorage.
+5. Click **Fetch Products** to load products from `https://api.salla.dev/admin/v2/products?page=1`.
+6. If access token expires, refresh is triggered automatically using `refresh_token`.
+
+## Security note
+- Do **not** put Client Secret in frontend code.
+- If secrets were exposed previously, rotate them immediately and update Vercel env vars.
