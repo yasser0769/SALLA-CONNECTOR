@@ -3,76 +3,147 @@
 Static frontend (`index.html`) + Vercel serverless functions under `/api` for Salla OAuth + Merchant API.
 
 ## File structure
-- `index.html` — UI (Connect / Test Token / Fetch Products).
-- `api/oauth/start.js` — starts OAuth redirect.
-- `api/oauth/callback.js` — handles callback and stores session cookie.
-- `api/salla/test-token.js` — verifies token against Merchant API `GET /admin/v2/store/info`.
-- `api/salla/products.js` — fetches paginated products (max 5 pages).
-- `api/salla/logout.js` — clears session cookies.
-- `api/_lib/salla.js` — shared auth/cookie/helpers.
 
-## 1) Configure Salla Partner Portal
-Set Callback URL to **exactly**:
+```
+index.html                  — UI (Connect / Test Token / Fetch Products / CSV Match / XLSX Export)
+vercel.json                 — Vercel function config (maxDuration, headers)
+api/
+  salla.js                  — Main router: ping + paginated products proxy
+  _lib/salla.js             — Shared OAuth, session/cookie, helpers
+  oauth/
+    start.js                — Initiates OAuth redirect to Salla
+    callback.js             — Handles OAuth callback, exchanges code for tokens
+  salla/
+    test-token.js           — Verifies token against Merchant API
+    products.js             — (Legacy) single-page products fetch
+    logout.js               — Clears session cookies
+```
 
-`https://YOUR_DOMAIN/api/oauth/callback`
+## Required Environment Variables
 
-It must match `SALLA_REDIRECT_URI` exactly.
+Set these in **Vercel Project Settings > Environment Variables**:
 
-## 2) Configure Vercel Environment Variables
-Set these values in Vercel Project Settings:
-- `SALLA_CLIENT_ID`
-- `SALLA_CLIENT_SECRET`
-- `SALLA_REDIRECT_URI`
-- `APP_SESSION_SECRET` (long random value)
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `SALLA_CLIENT_ID` | Yes | — | OAuth client ID from Salla Partner Portal |
+| `SALLA_CLIENT_SECRET` | Yes | — | OAuth client secret (server-side only, never exposed to browser) |
+| `SALLA_REDIRECT_URI` | Yes | — | Must **exactly** match the Callback URL in Salla Partner Portal |
+| `APP_SESSION_SECRET` | Yes | — | Long random string used to HMAC-sign session cookies |
+| `SALLA_API_BASE` | No | `https://api.salla.dev` | Salla Merchant API base URL |
+| `SALLA_ACCOUNTS_BASE` | No | `https://accounts.salla.sa` | Salla OAuth/Accounts base URL |
 
-Optional:
-- `SALLA_API_BASE` (default `https://api.salla.dev`)
-- `SALLA_ACCOUNTS_BASE` (default `https://accounts.salla.sa`)
+## Callback and Webhook URLs
 
-## 3) How OAuth works now
-1. Click **Connect with Salla**.
-2. Browser goes to `/api/oauth/start`.
+### OAuth Callback URL (required)
+
+Set in **Salla Partner Portal > App Settings > Callback URL**:
+
+```
+https://YOUR_DOMAIN/api/oauth/callback
+```
+
+This must match `SALLA_REDIRECT_URI` exactly (including protocol and path).
+
+### Webhook URL (optional)
+
+Not currently used. If you add webhook handling later, configure it as:
+
+```
+https://YOUR_DOMAIN/api/webhooks/salla
+```
+
+## How OAuth Works
+
+1. User clicks **Connect with Salla**.
+2. Browser redirects to `/api/oauth/start`, which generates CSRF state and redirects to Salla's OAuth page.
 3. User authorizes on Salla.
 4. Salla redirects to `/api/oauth/callback?code=...&state=...`.
-5. Backend exchanges code using `x-www-form-urlencoded`.
-6. Backend stores `access_token` + `refresh_token` in signed **HttpOnly** cookie.
+5. Backend validates CSRF state, exchanges code for tokens via `x-www-form-urlencoded` POST.
+6. Backend stores `access_token` + `refresh_token` in signed **HttpOnly** cookie (30-day expiry).
+7. Browser redirects to `/?oauth=success`.
 
 No `client_secret` is ever exposed to frontend JS.
 
-## 4) Diagnostics and testing
-- Ping: `/api/salla?action=ping`
-- Token validity: click **Test Token** (calls `/api/salla/test-token`).
-- Products: click **Fetch Products** (calls `/api/salla/products`).
+## Token Refresh
 
-If Merchant API fails, UI displays upstream status + `debug_id` so you can inspect Vercel Runtime Logs.
+When Merchant API returns 401/403, backend automatically:
+1. Exchanges `refresh_token` for new tokens
+2. Updates session cookie
+3. Retries the original request once
 
-## 5) Refresh behavior
-When Merchant API returns 401/403, backend tries refresh token once, updates session cookie, and retries the request once.
+## Product Pagination
 
-## Security notes
-- Keep `APP_SESSION_SECRET` long and private.
-- Rotate Salla secrets if they were ever exposed.
+- Frontend drives pagination: calls `GET /api/salla?action=products_page&page=N&per_page=100` per page.
+- Loops until `total_pages` is reached, or items returned < per_page (no metadata fallback).
+- 200ms delay between page requests to respect rate limits.
+- Retry on 429/5xx: up to 2 retries with 300ms * attempt backoff.
+- Optional UI limits: `maxPages` and `maxItems` inputs.
+- Progress bar and per-page log shown during fetch.
 
+Response shape from `/api/salla?action=products_page`:
+```json
+{
+  "items": [],
+  "page": 1,
+  "per_page": 100,
+  "next_page": 2,
+  "total_pages": 9,
+  "pagination": {},
+  "upstream_status": 200,
+  "body": {},
+  "debug_id": "a1b2c3d4"
+}
+```
 
-## 6) Supplier CSV header selection (frontend only)
-- In Step 3, upload supplier CSV file from browser (not sent to backend).
-- App reads header columns, shows first 5 rows preview, then you choose SKU column manually.
-- Matching key is normalized (trim + uppercase + remove spaces/dashes).
-- Duplicate supplier keys are detected and shown in UI.
-- Grouped preview is rendered per Salla product with variants listed below each product header.
+## Supplier CSV Upload and SKU Matching
 
+1. Upload supplier CSV (browser-only, file never sent to backend).
+2. Select encoding (UTF-8 or Windows-1256 for Arabic Excel files).
+3. Choose which column represents SKU (e.g., "Item#").
+4. Optionally select Price and Quantity columns for export.
+5. Click **Match** to see grouped preview:
+   - Product header row (name, ID)
+   - Variant rows below with SKU match status
+6. Click **Export XLSX** to download grouped results.
 
-### Pagination notes for Fetch Products
-- Frontend requests `per_page=100` and keeps paging until metadata indicates last page, or page items are fewer than `per_page` when metadata is absent.
-- Optional UI testing limits: `maxPages` and `maxItems`.
-- UI log prints first-page pagination object for diagnostics.
+### XLSX Export Format
 
+| Row Type | Product ID | Product Name | Variant ID | Variant Name | SKU | Matched | Supplier Price | Supplier Qty |
+|---|---|---|---|---|---|---|---|---|
+| PRODUCT | 123 | Widget | | | | | | |
+| VARIANT | 123 | Widget | 456 | Red/Large | W-R-L | YES | 15.99 | 50 |
+| VARIANT | 123 | Widget | 457 | Blue/Small | W-B-S | NO | | |
+| PRODUCT | 124 | Gadget | | | G-1 | YES | 25.00 | 100 |
 
-## 7) API route used by frontend pagination
-- Frontend requests `GET /api/salla?action=products_page&page=N&per_page=100`.
-- Response shape includes: `items`, `page`, `per_page`, `next_page`, `total_pages`, `pagination`, `upstream_status`, `debug_id`.
-- This keeps pagination client-driven to avoid serverless timeout on large stores.
+- **Variable products**: PRODUCT row is a group header (no SKU), VARIANT rows have SKU + match data.
+- **Simple products**: PRODUCT row has its own SKU + match data directly.
 
-## 8) UI boot/runtime diagnostics
-- The header now shows **App loaded ✓** after JS boot.
-- Runtime errors are captured via `window.onerror` and `unhandledrejection` and shown in-page (not only in console).
+### SKU Normalization
+
+Keys are normalized before matching: `trim → UPPERCASE → remove spaces and dashes`.
+
+Example: `"sku-123 456"` → `"SKU123456"`
+
+## API Endpoints
+
+| Endpoint | Method | Auth | Description |
+|---|---|---|---|
+| `/api/salla?action=ping` | GET | No | Health check |
+| `/api/salla?action=products_page&page=N&per_page=100` | GET | Cookie | Paginated products proxy |
+| `/api/salla/test-token` | GET | Cookie | Verify token against Merchant API |
+| `/api/oauth/start` | GET | No | Start OAuth redirect |
+| `/api/oauth/callback` | GET | No | OAuth callback handler |
+| `/api/salla/logout` | GET | Cookie | Clear session |
+
+All error responses include `debug_id` for cross-referencing with Vercel Runtime Logs.
+
+## UI Diagnostics
+
+- Header badge shows **App loaded** after JS boot completes.
+- Runtime errors captured via `window.onerror` and `unhandledrejection`, displayed in-page.
+
+## Security Notes
+
+- `APP_SESSION_SECRET` must be long (32+ chars) and kept private.
+- Rotate Salla secrets immediately if they were ever exposed.
+- Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` in production.

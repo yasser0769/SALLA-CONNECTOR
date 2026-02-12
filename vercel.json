@@ -1,1 +1,21 @@
-{}
+{
+  "functions": {
+    "api/salla.js": {
+      "maxDuration": 30
+    },
+    "api/salla/test-token.js": {
+      "maxDuration": 15
+    },
+    "api/oauth/callback.js": {
+      "maxDuration": 15
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
+  ]
+}
