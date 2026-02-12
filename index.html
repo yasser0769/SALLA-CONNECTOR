@@ -63,6 +63,7 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
     <div class="badge">SALLA CONNECTOR v1</div>
     <h1>ربط وتحديث مخزون سلة</h1>
     <p>ربط مباشر مع API سلة — سحب المنتجات وتحديث الأسعار والكميات</p>
+    <div id="bootStatus" class="badge" style="background:var(--blue-dim);color:var(--blue)">Booting...</div>
   </div>
 
   <!-- STEP 1: Auth -->
@@ -79,6 +80,7 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
       </div>
     </div>
     <div id="authStatus" class="status"></div>
+    <div id="runtimeStatus" class="status"></div>
     <div id="tokenDisplay" class="hidden">
       <div class="token-box" id="tokenText"></div>
       <div class="hint" id="tokenTypeInfo" style="margin-top:6px"></div>
@@ -161,7 +163,36 @@ let supplierDuplicateKeys = [];
 
 const API_BASE = '/api';
 
+const APP_VERSION = '2026-02-12-bootfix';
+
+function setBootStatus(msg, type = 'info') {
+  const el = document.getElementById('bootStatus');
+  if (!el) return;
+  const color = type === 'ok' ? 'var(--green)' : (type === 'err' ? 'var(--red)' : 'var(--blue)');
+  const bg = type === 'ok' ? 'var(--green-dim)' : (type === 'err' ? 'var(--red-dim)' : 'var(--blue-dim)');
+  el.style.color = color;
+  el.style.background = bg;
+  el.textContent = msg;
+}
+
+function showRuntimeError(message) {
+  const el = document.getElementById('runtimeStatus');
+  if (!el) return;
+  el.className = 'status err';
+  el.innerHTML = '⚠️ Runtime Error:<br><pre>' + String(message).slice(0, 1200) + '</pre>';
+}
+
+window.onerror = function(message, source, lineno, colno) {
+  showRuntimeError(message + ' @ ' + source + ':' + lineno + ':' + colno);
+};
+
+window.addEventListener('unhandledrejection', function(ev) {
+  const reason = ev && ev.reason ? (ev.reason.stack || ev.reason.message || String(ev.reason)) : 'unknown rejection';
+  showRuntimeError(reason);
+});
+
 window.addEventListener('load', () => {
+  setBootStatus('App loaded ✓ v' + APP_VERSION, 'ok');
   const params = new URLSearchParams(window.location.search);
   const oauth = params.get('oauth');
   const reason = params.get('reason');
@@ -208,7 +239,7 @@ function startAuth() {
 async function testApi() {
   showStatus('authStatus', '⏳ فحص Ping...', 'info');
   try {
-    const resp = await fetch(API_BASE + '/salla?action=ping');
+    const resp = await fetch(API_BASE + '/salla?action=ping', { cache: 'no-store' });
     const { data, ok, status } = await parseJsonResponse(resp);
     if (!ok) {
       showStatus('authStatus', '❌ Ping failed: HTTP ' + status + '<br><pre>' + pretty(data) + '</pre>', 'err');
@@ -223,7 +254,7 @@ async function testApi() {
 async function testToken() {
   showStatus('authStatus', '⏳ اختبار صلاحية Access Token...', 'info');
   try {
-    const resp = await fetch(API_BASE + '/salla/test-token');
+    const resp = await fetch(API_BASE + '/salla/test-token', { cache: 'no-store' });
     const { data, ok, status } = await parseJsonResponse(resp);
     if (!ok) {
       showStatus('authStatus', '❌ Test Token failed (HTTP ' + status + ')<br><pre>' + pretty(data) + '</pre>', 'err');
@@ -237,6 +268,13 @@ async function testToken() {
   } catch (e) {
     showStatus('authStatus', '❌ ' + e.message, 'err');
   }
+
+async function logout() {
+  await fetch(API_BASE + '/salla/logout');
+  document.getElementById('step2').classList.add('hidden');
+  document.getElementById('step3').classList.add('hidden');
+  showStatus('authStatus', 'تم تسجيل الخروج من الجلسة.', 'warn');
+}
 
 async function logout() {
   await fetch(API_BASE + '/salla/logout');
@@ -282,7 +320,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function fetchProductsPageWithRetry(page, perPage, retries = 2) {
   let attempt = 0;
   while (true) {
-    const resp = await fetch(API_BASE + '/salla/products?page=' + page + '&per_page=' + perPage);
+    const resp = await fetch(API_BASE + '/salla?action=products_page&page=' + page + '&per_page=' + perPage, { cache: 'no-store' });
     const parsed = await parseJsonResponse(resp);
     if (parsed.ok) return parsed;
 

@@ -66,3 +66,13 @@ When Merchant API returns 401/403, backend tries refresh token once, updates ses
 - Frontend requests `per_page=100` and keeps paging until metadata indicates last page, or page items are fewer than `per_page` when metadata is absent.
 - Optional UI testing limits: `maxPages` and `maxItems`.
 - UI log prints first-page pagination object for diagnostics.
+
+
+## 7) API route used by frontend pagination
+- Frontend requests `GET /api/salla?action=products_page&page=N&per_page=100`.
+- Response shape includes: `items`, `page`, `per_page`, `next_page`, `total_pages`, `pagination`, `upstream_status`, `debug_id`.
+- This keeps pagination client-driven to avoid serverless timeout on large stores.
+
+## 8) UI boot/runtime diagnostics
+- The header now shows **App loaded ✓** after JS boot.
+- Runtime errors are captured via `window.onerror` and `unhandledrejection` and shown in-page (not only in console).
