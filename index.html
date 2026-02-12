@@ -707,6 +707,31 @@ function buildChangeReport(products, sMap, skuSet) {
   return report;
 }
 
+function buildExportRows(changeReport) {
+  const priceExportRows = [];
+  const quantityExportRows = [];
+
+  for (const entry of changeReport) {
+    const pVars = entry.variantRows.filter(v => v.priceChanged);
+    if (pVars.length) {
+      priceExportRows.push({ type: 'parent', productId: entry.parentRow.productId, productName: entry.parentRow.productName });
+      for (const v of pVars) {
+        priceExportRows.push({ type: 'variant', sku: v.sku, variantId: v.variantId, newValues: v.newValues });
+      }
+    }
+
+    const qVars = entry.variantRows.filter(v => v.quantityChanged);
+    if (qVars.length) {
+      quantityExportRows.push({ type: 'parent', productId: entry.parentRow.productId, productName: entry.parentRow.productName });
+      for (const v of qVars) {
+        quantityExportRows.push({ type: 'variant', sku: v.sku, variantId: v.variantId, newValues: v.newValues });
+      }
+    }
+  }
+
+  return { priceExportRows, quantityExportRows };
+}
+
 function compareAndUpdate() {
   const log = document.getElementById('cmpLog');
   log.classList.remove('hidden');
