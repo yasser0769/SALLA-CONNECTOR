@@ -130,22 +130,13 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
 
     <div id="supInfo" class="status"></div>
 
-    <div class="ff" style="margin-top:10px">
-      <label>اختر عمود المطابقة (SKU)</label>
-      <select id="skuColumnSelect" style="width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.82rem;outline:none"></select>
-      <div class="row" style="margin-top:8px;gap:8px">
-        <button class="btn btn-accent" id="useSkuColBtn" onclick="useSkuColumn()" disabled>✅ استخدام هذا العمود</button>
+    <!-- Column selection (appears after CSV header is read) -->
+    <div id="columnSelectionArea" class="hidden" style="margin-top:14px">
+      <div class="ff">
+        <label>اختر عمود المطابقة (SKU)</label>
+        <select id="skuColumnSelect" style="width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.82rem;outline:none"></select>
       </div>
-    </div>
-
-    <div class="ff" style="margin-top:10px">
-      <label>معاينة أول 5 صفوف</label>
-      <pre id="csvPreview" class="log hidden" style="max-height:180px"></pre>
-    </div>
-
-    <div class="ff" style="margin-top:10px">
-      <label>أعمدة المورد الإضافية (اختياري — للتصدير)</label>
-      <div class="row" style="gap:8px">
+      <div class="row" style="gap:8px;margin-top:8px">
         <div style="flex:1">
           <span style="font-size:0.7rem;color:var(--text3)">عمود التكلفة (Cost)</span>
           <select id="costColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
@@ -155,6 +146,29 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
           <select id="retailPriceColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
         </div>
       </div>
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button class="btn btn-accent" id="useSkuColBtn" onclick="useSkuColumn()" disabled>✅ استخدام الأعمدة</button>
+      </div>
+    </div>
+
+    <div class="ff" style="margin-top:10px">
+      <label>معاينة أول 5 صفوف</label>
+      <pre id="csvPreview" class="log hidden" style="max-height:180px"></pre>
+    </div>
+
+    <!-- Export counters (appears after column selection) -->
+    <div class="stats hidden" id="exportStats">
+      <div class="st"><div class="n" id="es1" style="color:var(--accent)">0</div><div class="l">إجمالي SKUs سلة</div></div>
+      <div class="st"><div class="n" id="es2" style="color:var(--green)">0</div><div class="l">مطابق</div></div>
+      <div class="st"><div class="n" id="es3" style="color:var(--red)">0</div><div class="l">غير مطابق</div></div>
+      <div class="st"><div class="n" id="es4" style="color:var(--blue)">0</div><div class="l">صفوف أسعار للتصدير</div></div>
+      <div class="st"><div class="n" id="es5" style="color:var(--amber)">0</div><div class="l">صفوف كميات للتصدير</div></div>
+    </div>
+
+    <!-- Download Salla-import XLSX buttons -->
+    <div class="row hidden" id="exportBtnsRow" style="margin-top:10px;gap:8px">
+      <button class="btn btn-green" id="dlPriceBtn" disabled onclick="downloadPriceXlsx()">📥 تحميل XLSX الأسعار</button>
+      <button class="btn btn-green" id="dlQtyBtn" disabled onclick="downloadQuantityXlsx()">📥 تحميل XLSX الكميات</button>
     </div>
 
     <div class="row" style="margin-top:14px;gap:8px">
@@ -182,6 +196,7 @@ let selectedSkuColumn = "";
 let supplierMap = new Map();
 let supplierSkuSet = new Set();
 let lastMatchResult = null;
+let lastExportResult = null;
 
 const API_BASE = '/api';
 
@@ -480,7 +495,11 @@ async function loadSupplierCsv(ev) {
   selectedSkuColumn = '';
   supplierMap = new Map();
   supplierSkuSet = new Set();
+  lastExportResult = null;
   document.getElementById('compareBtn').disabled = true;
+  document.getElementById('columnSelectionArea').classList.add('hidden');
+  document.getElementById('exportStats').classList.add('hidden');
+  document.getElementById('exportBtnsRow').classList.add('hidden');
 
   try {
     const buffer = await file.arrayBuffer();
@@ -509,6 +528,7 @@ async function loadSupplierCsv(ev) {
 
     renderSkuColumnOptions(headers);
     renderCsvPreview(supplierRows, headers);
+    document.getElementById('columnSelectionArea').classList.remove('hidden');
 
     if (!supplierRows.length) {
       showSupplierMessage('⚠️ الملف يحتوي Header لكن لا توجد بيانات.', 'warn');
@@ -614,6 +634,8 @@ function useSkuColumn() {
   if (storeProducts.length) {
     document.getElementById('compareBtn').disabled = false;
   }
+
+  runChangeDetection();
 }
 
 function buildProductGroups(products) {
@@ -963,6 +985,79 @@ function generateQuantityXlsx(quantityExportRows, products) {
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'الكميات');
   XLSX.writeFile(wb, 'quantities-export.xlsx');
+}
+
+/* ── Change-detection wiring + download handlers ─────────────── */
+
+function runChangeDetection() {
+  lastExportResult = null;
+  document.getElementById('exportStats').classList.add('hidden');
+  document.getElementById('exportBtnsRow').classList.add('hidden');
+  document.getElementById('dlPriceBtn').disabled = true;
+  document.getElementById('dlQtyBtn').disabled = true;
+
+  if (!storeProducts.length || !supplierMap.size) return;
+
+  var report = buildChangeReport(storeProducts, supplierMap, supplierSkuSet);
+  var result = buildExportRows(report);
+  lastExportResult = result;
+
+  /* count Salla SKUs + matches */
+  var totalSallaSkus = 0;
+  var matchedSkus = 0;
+  for (var i = 0; i < storeProducts.length; i++) {
+    var p = storeProducts[i];
+    var variants = Array.isArray(p.skus) ? p.skus : [];
+    if (variants.length === 0) {
+      var k = normalizeSku(p.sku);
+      if (k) { totalSallaSkus++; if (supplierMap.has(k)) matchedSkus++; }
+    } else {
+      for (var j = 0; j < variants.length; j++) {
+        var k2 = normalizeSku(variants[j].sku);
+        if (k2) { totalSallaSkus++; if (supplierMap.has(k2)) matchedSkus++; }
+      }
+    }
+  }
+
+  var priceVarCount = result.priceExportRows.filter(function(r) { return r.type === 'variant'; }).length;
+  var qtyVarCount   = result.quantityExportRows.filter(function(r) { return r.type === 'variant'; }).length;
+
+  document.getElementById('es1').textContent = totalSallaSkus.toLocaleString();
+  document.getElementById('es2').textContent = matchedSkus.toLocaleString();
+  document.getElementById('es3').textContent = (totalSallaSkus - matchedSkus).toLocaleString();
+  document.getElementById('es4').textContent = priceVarCount.toLocaleString();
+  document.getElementById('es5').textContent = qtyVarCount.toLocaleString();
+  document.getElementById('exportStats').classList.remove('hidden');
+
+  document.getElementById('exportBtnsRow').classList.remove('hidden');
+  document.getElementById('dlPriceBtn').disabled = (priceVarCount === 0);
+  document.getElementById('dlQtyBtn').disabled = (qtyVarCount === 0);
+}
+
+function downloadPriceXlsx() {
+  if (!lastExportResult || !lastExportResult.priceExportRows.length) {
+    showSupplierMessage('❌ لا توجد صفوف أسعار للتصدير.', 'err');
+    return;
+  }
+  try {
+    generatePriceXlsx(lastExportResult.priceExportRows, storeProducts);
+    showSupplierMessage('✅ تم تحميل prices-export.xlsx', 'ok');
+  } catch (e) {
+    showSupplierMessage('❌ فشل التصدير: ' + e.message, 'err');
+  }
+}
+
+function downloadQuantityXlsx() {
+  if (!lastExportResult || !lastExportResult.quantityExportRows.length) {
+    showSupplierMessage('❌ لا توجد صفوف كميات للتصدير.', 'err');
+    return;
+  }
+  try {
+    generateQuantityXlsx(lastExportResult.quantityExportRows, storeProducts);
+    showSupplierMessage('✅ تم تحميل quantities-export.xlsx', 'ok');
+  } catch (e) {
+    showSupplierMessage('❌ فشل التصدير: ' + e.message, 'err');
+  }
 }
 
 function compareAndUpdate() {
