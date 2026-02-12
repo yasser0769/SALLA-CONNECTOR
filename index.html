@@ -143,12 +143,33 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
       <pre id="csvPreview" class="log hidden" style="max-height:180px"></pre>
     </div>
 
+    <div class="ff" style="margin-top:10px">
+      <label>أعمدة المورد الإضافية (اختياري — للتصدير)</label>
+      <div class="row" style="gap:8px">
+        <div style="flex:1">
+          <span style="font-size:0.7rem;color:var(--text3)">عمود السعر</span>
+          <select id="priceColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
+        </div>
+        <div style="flex:1">
+          <span style="font-size:0.7rem;color:var(--text3)">عمود الكمية</span>
+          <select id="qtyColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
+        </div>
+      </div>
+    </div>
+
     <div class="row" style="margin-top:14px;gap:8px">
       <button class="btn btn-accent" id="compareBtn" disabled onclick="compareAndUpdate()">⚡ إنشاء معاينة مطابقة مجمّعة</button>
+      <button class="btn btn-green" id="exportBtn" disabled onclick="exportMatchedXlsx()">📥 تصدير XLSX</button>
+    </div>
+
+    <div class="stats hidden" id="cmpStats">
+      <div class="st"><div class="n" id="cs1" style="color:var(--green)">0</div><div class="l">مطابق</div></div>
+      <div class="st"><div class="n" id="cs2" style="color:var(--red)">0</div><div class="l">غير مطابق</div></div>
+      <div class="st"><div class="n" id="cs3" style="color:var(--accent)">0</div><div class="l">إجمالي SKUs</div></div>
+      <div class="st"><div class="n" id="cs4" style="color:var(--amber)">0</div><div class="l">مفاتيح مورد فريدة</div></div>
     </div>
 
     <div class="log hidden" id="cmpLog"></div>
-  </div>
   </div>
 </div>
 
@@ -160,10 +181,11 @@ let supplierEncoding = "utf-8";
 let selectedSkuColumn = "";
 let supplierMap = new Map();
 let supplierDuplicateKeys = [];
+let lastMatchResult = null;
 
 const API_BASE = '/api';
 
-const APP_VERSION = '2026-02-12-bootfix';
+const APP_VERSION = '2026-02-12-v2';
 
 function setBootStatus(msg, type = 'info') {
   const el = document.getElementById('bootStatus');
@@ -268,12 +290,6 @@ async function testToken() {
   } catch (e) {
     showStatus('authStatus', '❌ ' + e.message, 'err');
   }
-
-async function logout() {
-  await fetch(API_BASE + '/salla/logout');
-  document.getElementById('step2').classList.add('hidden');
-  document.getElementById('step3').classList.add('hidden');
-  showStatus('authStatus', 'تم تسجيل الخروج من الجلسة.', 'warn');
 }
 
 async function logout() {
@@ -340,7 +356,7 @@ async function pullProducts() {
   prog.classList.remove('hidden'); bar.style.width = '5%';
   document.getElementById('pullBtn').disabled = true;
 
-  function plog(m) { log.textContent += m + '\\n'; log.scrollTop = log.scrollHeight; }
+  function plog(m) { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; }
 
   const perPage = 100;
   const maxPagesInput = Number(document.getElementById('maxPagesInput').value || 0);
@@ -498,6 +514,17 @@ function renderSkuColumnOptions(headers) {
     sel.appendChild(option);
   });
   document.getElementById('useSkuColBtn').disabled = false;
+
+  ['priceColumnSelect', 'qtyColumnSelect'].forEach(id => {
+    const s = document.getElementById(id);
+    s.innerHTML = '<option value="">— لا شيء —</option>';
+    headers.forEach(h => {
+      const o = document.createElement('option');
+      o.value = h;
+      o.textContent = h;
+      s.appendChild(o);
+    });
+  });
 }
 
 function renderCsvPreview(rows, headers) {
@@ -564,10 +591,18 @@ function buildProductGroups(products) {
   });
 }
 
+function getSupplierRow(key) {
+  if (!key) return null;
+  const val = supplierMap.get(key);
+  if (!val) return null;
+  return Array.isArray(val) ? val[0] : val;
+}
+
 function compareAndUpdate() {
   const log = document.getElementById('cmpLog');
   log.classList.remove('hidden');
   log.textContent = '';
+  lastMatchResult = null;
 
   if (!storeProducts.length) {
     log.textContent = '❌ لا توجد منتجات من سلة. نفّذ Fetch Products أولاً.';
@@ -578,27 +613,70 @@ function compareAndUpdate() {
     return;
   }
 
+  const priceCol = document.getElementById('priceColumnSelect').value || '';
+  const qtyCol = document.getElementById('qtyColumnSelect').value || '';
   const groups = buildProductGroups(storeProducts);
   let matched = 0;
   let unmatched = 0;
   const lines = [];
+  const exportRows = [];
 
   for (const g of groups) {
     lines.push('');
     lines.push('📦 ' + g.productName + ' (ID: ' + g.productId + ')');
 
     if (g.variants.length > 0) {
+      exportRows.push({
+        row_type: 'PRODUCT',
+        product_id: g.productId,
+        product_name: g.productName,
+        variant_id: '',
+        variant_name: '',
+        sku: '',
+        matched: '',
+        supplier_price: '',
+        supplier_qty: '',
+      });
+
       for (const v of g.variants) {
         const key = normalizeKey(v.sku);
         const ok = key && supplierMap.has(key);
         if (ok) matched++; else unmatched++;
+        const supRow = ok ? getSupplierRow(key) : null;
+
         lines.push('   └─ ' + v.variantName + ' | SKU: ' + (v.sku || '-') + ' | ' + (ok ? '✅ مطابق' : '❌ غير مطابق'));
+
+        exportRows.push({
+          row_type: 'VARIANT',
+          product_id: g.productId,
+          product_name: g.productName,
+          variant_id: v.variantId,
+          variant_name: v.variantName,
+          sku: v.sku || '',
+          matched: ok ? 'YES' : 'NO',
+          supplier_price: supRow && priceCol ? (supRow[priceCol] || '') : '',
+          supplier_qty: supRow && qtyCol ? (supRow[qtyCol] || '') : '',
+        });
       }
     } else {
       const key = normalizeKey(g.productSkuIfNoVariants);
       const ok = key && supplierMap.has(key);
       if (ok) matched++; else unmatched++;
+      const supRow = ok ? getSupplierRow(key) : null;
+
       lines.push('   └─ Product SKU: ' + (g.productSkuIfNoVariants || '-') + ' | ' + (ok ? '✅ مطابق' : '❌ غير مطابق'));
+
+      exportRows.push({
+        row_type: 'PRODUCT',
+        product_id: g.productId,
+        product_name: g.productName,
+        variant_id: '',
+        variant_name: '',
+        sku: g.productSkuIfNoVariants || '',
+        matched: ok ? 'YES' : 'NO',
+        supplier_price: supRow && priceCol ? (supRow[priceCol] || '') : '',
+        supplier_qty: supRow && qtyCol ? (supRow[qtyCol] || '') : '',
+      });
     }
   }
 
@@ -607,6 +685,54 @@ function compareAndUpdate() {
   lines.unshift('عمود SKU المختار: ' + selectedSkuColumn);
 
   log.textContent = lines.join("\n");
+
+  lastMatchResult = { exportRows, matched, unmatched, priceCol, qtyCol };
+
+  document.getElementById('cs1').textContent = matched.toLocaleString();
+  document.getElementById('cs2').textContent = unmatched.toLocaleString();
+  document.getElementById('cs3').textContent = (matched + unmatched).toLocaleString();
+  document.getElementById('cs4').textContent = supplierMap.size.toLocaleString();
+  document.getElementById('cmpStats').classList.remove('hidden');
+  document.getElementById('exportBtn').disabled = false;
+}
+
+function exportMatchedXlsx() {
+  if (!lastMatchResult || !lastMatchResult.exportRows.length) {
+    showSupplierMessage('❌ نفّذ المطابقة أولاً قبل التصدير.', 'err');
+    return;
+  }
+
+  try {
+    const headers = ['Row Type', 'Product ID', 'Product Name', 'Variant ID', 'Variant Name', 'SKU', 'Matched', 'Supplier Price', 'Supplier Qty'];
+    const data = [headers];
+
+    for (const r of lastMatchResult.exportRows) {
+      data.push([
+        r.row_type,
+        r.product_id,
+        r.product_name,
+        r.variant_id,
+        r.variant_name,
+        r.sku,
+        r.matched,
+        r.supplier_price,
+        r.supplier_qty,
+      ]);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+
+    const colWidths = [12, 12, 30, 12, 25, 18, 10, 15, 15];
+    ws['!cols'] = colWidths.map(w => ({ wch: w }));
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Matched Products');
+    XLSX.writeFile(wb, 'salla_matched_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+
+    showSupplierMessage('✅ تم تصدير ' + lastMatchResult.exportRows.length + ' صف إلى XLSX.', 'ok');
+  } catch (e) {
+    showSupplierMessage('❌ فشل التصدير: ' + e.message, 'err');
+  }
 }
 </script>
 </body>
