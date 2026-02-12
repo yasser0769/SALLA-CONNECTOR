@@ -52,3 +52,11 @@ When Merchant API returns 401/403, backend tries refresh token once, updates ses
 ## Security notes
 - Keep `APP_SESSION_SECRET` long and private.
 - Rotate Salla secrets if they were ever exposed.
+
+
+## 6) Supplier CSV header selection (frontend only)
+- In Step 3, upload supplier CSV file from browser (not sent to backend).
+- App reads header columns, shows first 5 rows preview, then you choose SKU column manually.
+- Matching key is normalized (trim + uppercase + remove spaces/dashes).
+- Duplicate supplier keys are detected and shown in UI.
+- Grouped preview is rendered per Salla product with variants listed below each product header.

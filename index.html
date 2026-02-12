@@ -6,6 +6,7 @@
 <title>أداة سلة — ربط وتحديث المخزون والأسعار</title>
 <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@200;300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <style>
 :root{--bg:#07060d;--surface:#100f17;--surface2:#1a1826;--surface3:#242232;--border:#2a2740;--border2:#3a3655;--text:#ece8f4;--text2:#8b85a0;--text3:#5e5872;--accent:#a78bfa;--accent-dim:rgba(167,139,250,0.1);--green:#34d399;--green-dim:rgba(52,211,153,0.1);--red:#f87171;--red-dim:rgba(248,113,113,0.1);--amber:#fbbf24;--amber-dim:rgba(251,191,36,0.1);--blue:#60a5fa;--blue-dim:rgba(96,165,250,0.1);--radius:12px}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -104,35 +105,55 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
     </div>
   </div>
 
-  <!-- STEP 3: Supplier -->
+  <!-- STEP 3: Supplier CSV -->
   <div class="card hidden" id="step3">
-    <h2><span class="num">3</span> مقارنة مع المورد</h2>
-    <div class="sup-upload" onclick="this.querySelector('input').click()" id="supZone">
-      <input type="file" accept=".xlsx,.xls,.csv" onchange="loadSupplier(event)">
-      <div style="font-size:22px;margin-bottom:8px">📦</div>
-      <div style="font-size:0.86rem;font-weight:500">ارفع ملف المورد (FragranceX)</div>
-      <div style="font-size:0.72rem;color:var(--text3);margin-top:4px">AllFragrancesExcelList.xls</div>
-      <div id="supInfo" style="font-size:0.78rem;color:var(--green);margin-top:8px"></div>
+    <h2><span class="num">3</span> رفع CSV المورد ومطابقة SKU</h2>
+    <p style="font-size:0.8rem;color:var(--text2);margin-bottom:12px">ارفع CSV، اختر عمود SKU، ثم راجع معاينة المطابقة المجمّعة (منتج + خياراته).</p>
+
+    <div class="ff">
+      <label>ملف المورد (CSV فقط)</label>
+      <input id="supplierCsvInput" type="file" accept=".csv,text/csv" onchange="loadSupplierCsv(event)">
+      <div class="hint">يدعم UTF-8 وWindows-1256 لملفات Excel العربية.</div>
     </div>
+
+    <div class="row" style="gap:8px;margin-bottom:10px">
+      <button class="btn btn-outline" onclick="setSupplierEncoding('utf-8')">UTF-8</button>
+      <button class="btn btn-outline" onclick="setSupplierEncoding('windows-1256')">Windows-1256</button>
+      <span id="encodingInfo" style="font-size:0.75rem;color:var(--text2)">الترميز الحالي: UTF-8</span>
+    </div>
+
+    <div id="supInfo" class="status"></div>
+
+    <div class="ff" style="margin-top:10px">
+      <label>اختر عمود المطابقة (SKU)</label>
+      <select id="skuColumnSelect" style="width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.82rem;outline:none"></select>
+      <div class="row" style="margin-top:8px;gap:8px">
+        <button class="btn btn-accent" id="useSkuColBtn" onclick="useSkuColumn()" disabled>✅ استخدام هذا العمود</button>
+      </div>
+    </div>
+
+    <div class="ff" style="margin-top:10px">
+      <label>معاينة أول 5 صفوف</label>
+      <pre id="csvPreview" class="log hidden" style="max-height:180px"></pre>
+    </div>
+
     <div class="row" style="margin-top:14px;gap:8px">
-      <button class="btn btn-accent" id="compareBtn" disabled onclick="compareAndUpdate()">⚡ مقارنة الأسعار والكميات</button>
-      <button class="btn btn-outline hidden" id="dlBtn" onclick="downloadResults()">⬇️ تحميل XLSX</button>
+      <button class="btn btn-accent" id="compareBtn" disabled onclick="compareAndUpdate()">⚡ إنشاء معاينة مطابقة مجمّعة</button>
     </div>
-    <div class="prog hidden" id="cmpProg"><div class="bar" id="cmpBar"></div></div>
+
     <div class="log hidden" id="cmpLog"></div>
-    <div class="stats hidden" id="cmpStats">
-      <div class="st"><div class="n" id="cs1" style="color:var(--accent)">0</div><div class="l">تطابق SKU</div></div>
-      <div class="st"><div class="n" id="cs2" style="color:var(--amber)">0</div><div class="l">تغيير سعر</div></div>
-      <div class="st"><div class="n" id="cs3" style="color:var(--green)">0</div><div class="l">ارتفاع</div></div>
-      <div class="st"><div class="n" id="cs4" style="color:var(--red)">0</div><div class="l">انخفاض</div></div>
-    </div>
+  </div>
   </div>
 </div>
 
 <script>
 let storeProducts = [];
-let supplierData = null;
-let exportData = {};
+let supplierRows = [];
+let supplierHeaders = [];
+let supplierEncoding = "utf-8";
+let selectedSkuColumn = "";
+let supplierMap = new Map();
+let supplierDuplicateKeys = [];
 
 const API_BASE = '/api';
 
@@ -247,6 +268,13 @@ async function logout() {
   showStatus('authStatus', 'تم تسجيل الخروج من الجلسة.', 'warn');
 }
 
+async function logout() {
+  await fetch(API_BASE + '/salla/logout');
+  document.getElementById('step2').classList.add('hidden');
+  document.getElementById('step3').classList.add('hidden');
+  showStatus('authStatus', 'تم تسجيل الخروج من الجلسة.', 'warn');
+}
+
 function copyToken() {
   showStatus('authStatus', 'ℹ️ التوكن محفوظ داخل HttpOnly Cookie (لا يمكن نسخه من المتصفح للأمان).', 'info');
 }
@@ -311,143 +339,189 @@ async function pullProducts() {
   document.getElementById('pullBtn').disabled = false;
 }
 
-// ==================== SUPPLIER ====================
-function loadSupplier(ev) {
-  const f = ev.target.files[0]; if (!f) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    const wb = XLSX.read(e.target.result, {type: 'array'});
-    supplierData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header: 1, defval: ''});
-    document.getElementById('supZone').classList.add('ok');
-    document.getElementById('supInfo').textContent = '✅ ' + f.name + ' — ' + (supplierData.length - 7).toLocaleString() + ' منتج';
-    document.getElementById('compareBtn').disabled = false;
-  };
-  reader.readAsArrayBuffer(f);
+// ==================== SUPPLIER CSV ====================
+function normalizeKey(value) {
+  return String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '');
 }
 
-// ==================== COMPARE ====================
+function setSupplierEncoding(enc) {
+  supplierEncoding = enc;
+  document.getElementById('encodingInfo').textContent = 'الترميز الحالي: ' + enc;
+}
+
+function showSupplierMessage(msg, type) {
+  const el = document.getElementById('supInfo');
+  el.className = 'status ' + type;
+  el.innerHTML = msg;
+}
+
+async function loadSupplierCsv(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+
+  selectedSkuColumn = '';
+  supplierMap = new Map();
+  supplierDuplicateKeys = [];
+  document.getElementById('compareBtn').disabled = true;
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const decoder = new TextDecoder(supplierEncoding, { fatal: false });
+    const text = decoder.decode(buffer);
+
+    const parsed = Papa.parse(text, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: h => String(h || '').trim(),
+      transform: v => String(v || '').trim(),
+    });
+
+    const headers = (parsed.meta && parsed.meta.fields) || [];
+    if (!headers.length) {
+      showSupplierMessage('❌ الملف لا يحتوي Header واضح. تأكد أن الصف الأول فيه أسماء أعمدة.', 'err');
+      return;
+    }
+
+    if (headers.some(h => /�/.test(h))) {
+      showSupplierMessage('⚠️ أحرف غير واضحة في العناوين. جرّب التحويل إلى Windows-1256.', 'warn');
+    }
+
+    supplierHeaders = headers;
+    supplierRows = (parsed.data || []).filter(row => Object.values(row).some(v => String(v || '').trim()));
+
+    renderSkuColumnOptions(headers);
+    renderCsvPreview(supplierRows, headers);
+
+    if (!supplierRows.length) {
+      showSupplierMessage('⚠️ الملف يحتوي Header لكن لا توجد بيانات.', 'warn');
+      return;
+    }
+
+    showSupplierMessage('✅ تم تحميل CSV بنجاح: ' + file.name + ' | عدد الصفوف: ' + supplierRows.length.toLocaleString(), 'ok');
+  } catch (e) {
+    showSupplierMessage('❌ فشل قراءة CSV: ' + e.message, 'err');
+  }
+}
+
+function renderSkuColumnOptions(headers) {
+  const sel = document.getElementById('skuColumnSelect');
+  sel.innerHTML = '<option value="">— اختر عمود SKU —</option>';
+  headers.forEach(h => {
+    const option = document.createElement('option');
+    option.value = h;
+    option.textContent = h;
+    sel.appendChild(option);
+  });
+  document.getElementById('useSkuColBtn').disabled = false;
+}
+
+function renderCsvPreview(rows, headers) {
+  const preview = document.getElementById('csvPreview');
+  const top = rows.slice(0, 5).map(r => {
+    const out = {};
+    headers.forEach(h => { out[h] = r[h] || ''; });
+    return out;
+  });
+  preview.textContent = JSON.stringify(top, null, 2);
+  preview.classList.remove('hidden');
+}
+
+function buildSupplierMap() {
+  supplierMap = new Map();
+  supplierDuplicateKeys = [];
+
+  for (const row of supplierRows) {
+    const key = normalizeKey(row[selectedSkuColumn]);
+    if (!key) continue;
+
+    if (supplierMap.has(key)) {
+      supplierDuplicateKeys.push(key);
+      const prev = supplierMap.get(key);
+      supplierMap.set(key, Array.isArray(prev) ? [...prev, row] : [prev, row]);
+    } else {
+      supplierMap.set(key, row);
+    }
+  }
+}
+
+function useSkuColumn() {
+  const col = document.getElementById('skuColumnSelect').value;
+  if (!col) {
+    showSupplierMessage('❌ اختر عمود SKU أولاً.', 'err');
+    return;
+  }
+
+  selectedSkuColumn = col;
+  buildSupplierMap();
+
+  const dupCount = supplierDuplicateKeys.length;
+  const dupMsg = dupCount ? ('<br>⚠️ مفاتيح مكررة: ' + dupCount) : '';
+  showSupplierMessage('✅ تم اختيار عمود SKU: <b>' + col + '</b><br>المفاتيح الفريدة: ' + supplierMap.size + dupMsg, dupCount ? 'warn' : 'ok');
+
+  if (storeProducts.length) {
+    document.getElementById('compareBtn').disabled = false;
+  }
+}
+
+function buildProductGroups(products) {
+  return (products || []).map(p => {
+    const variants = Array.isArray(p.skus) ? p.skus : [];
+    return {
+      productId: p.id,
+      productName: p.name || '(بدون اسم)',
+      productSkuIfNoVariants: variants.length ? '' : (p.sku || ''),
+      variants: variants.map(v => ({
+        variantId: v.id,
+        variantName: v.name || (v.options ? JSON.stringify(v.options) : 'Variant'),
+        sku: v.sku || '',
+      })),
+    };
+  });
+}
+
 function compareAndUpdate() {
-  if (!storeProducts.length || !supplierData) return;
   const log = document.getElementById('cmpLog');
-  const bar = document.getElementById('cmpBar');
-  document.getElementById('cmpProg').classList.remove('hidden');
-  log.classList.remove('hidden'); log.textContent = '';
-  bar.style.width = '5%';
+  log.classList.remove('hidden');
+  log.textContent = '';
 
-  function clog(m) { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; }
-
-  // Supplier map
-  const supMap = new Map();
-  for (let i = 7; i < supplierData.length; i++) {
-    const row = supplierData[i];
-    const sku = String(row[1] || '').replace(/[^\d]/g, '');
-    if (!sku) continue;
-    const cost = parseFloat(row[7]) || 0;
-    const retail = parseFloat(row[6]) || 0;
-    if (cost > 0) supMap.set(sku, {cost, retail});
+  if (!storeProducts.length) {
+    log.textContent = '❌ لا توجد منتجات من سلة. نفّذ Fetch Products أولاً.';
+    return;
   }
-  clog('✅ Supplier: ' + supMap.size + ' products');
-  bar.style.width = '20%';
-
-  function calcPrice(cost) {
-    const base = cost < 200 ? cost * 1.8 : cost * 1.6;
-    if (base < 10) return Math.round((base + 10) * 100) / 100;
-    if (base < 50) return Math.round((base + 35) * 100) / 100;
-    if (base < 100) return Math.round((base + 60) * 100) / 100;
-    if (base < 200) return Math.round((base + 70) * 100) / 100;
-    return Math.round((base + 80) * 100) / 100;
+  if (!supplierRows.length || !selectedSkuColumn) {
+    log.textContent = '❌ ارفع CSV واختر عمود SKU أولاً.';
+    return;
   }
-  const r2 = v => Math.round(v * 100) / 100;
 
-  const priceRows = [];
-  const qtyRows = [];
-  let matched = 0, priceChanged = 0, priceUp = 0, priceDown = 0;
+  const groups = buildProductGroups(storeProducts);
+  let matched = 0;
+  let unmatched = 0;
+  const lines = [];
 
-  for (const prod of storeProducts) {
-    const hasOptions = prod.skus && prod.skus.length > 0;
+  for (const g of groups) {
+    lines.push('');
+    lines.push('📦 ' + g.productName + ' (ID: ' + g.productId + ')');
 
-    if (!hasOptions) {
-      const sku = String(prod.sku || '');
-      const sup = supMap.get(sku);
-      if (!sup) continue;
-      matched++;
-      const newCost = r2(sup.cost);
-      const calculated = calcPrice(sup.cost);
-      let newPrice, newSale = '';
-      if (sup.retail > 0 && calculated < sup.retail) { newPrice = r2(sup.retail); newSale = calculated; }
-      else { newPrice = calculated; }
-      const oldEff = (prod.sale_price && prod.sale_price.amount) || (prod.price && prod.price.amount) || 0;
-      const newEff = newSale || newPrice;
-      if (oldEff > 0 && Math.abs((newEff - oldEff) / oldEff) * 100 > 2) {
-        priceChanged++;
-        if (newEff > oldEff) priceUp++; else priceDown++;
-        priceRows.push([prod.id, 'منتج', prod.name, sku, newPrice, newCost, newSale, '1970-01-01', '2050-12-31']);
+    if (g.variants.length > 0) {
+      for (const v of g.variants) {
+        const key = normalizeKey(v.sku);
+        const ok = key && supplierMap.has(key);
+        if (ok) matched++; else unmatched++;
+        lines.push('   └─ ' + v.variantName + ' | SKU: ' + (v.sku || '-') + ' | ' + (ok ? '✅ مطابق' : '❌ غير مطابق'));
       }
     } else {
-      let anyChange = false;
-      const optRows = [];
-      let minEff = Infinity, minPrice = 0, minCost = 0, minSale = '';
-
-      for (const v of prod.skus) {
-        const vSku = String(v.sku || '');
-        const sup = supMap.get(vSku);
-        if (!sup) continue;
-        matched++;
-        const newCost = r2(sup.cost);
-        const calculated = calcPrice(sup.cost);
-        let newPrice, newSale = '';
-        if (sup.retail > 0 && calculated < sup.retail) { newPrice = r2(sup.retail); newSale = calculated; }
-        else { newPrice = calculated; }
-        const eff = newSale || newPrice;
-        if (eff < minEff) { minEff = eff; minPrice = newPrice; minCost = newCost; minSale = newSale; }
-        const oldEff = (v.sale_price && v.sale_price.amount) || (v.price && v.price.amount) || 0;
-        if (oldEff > 0 && Math.abs((eff - oldEff) / oldEff) * 100 > 2) anyChange = true;
-        optRows.push([v.id, 'خيار', prod.name, vSku, newPrice, newCost, newSale, '', '']);
-      }
-
-      if (anyChange && optRows.length) {
-        priceChanged++;
-        const oldParentEff = (prod.sale_price && prod.sale_price.amount) || (prod.price && prod.price.amount) || 0;
-        if (minEff > oldParentEff) priceUp++; else priceDown++;
-        priceRows.push([prod.id, 'منتج', prod.name, '', minPrice, minCost, minSale, '1970-01-01', '2050-12-31']);
-        priceRows.push(...optRows);
-      }
+      const key = normalizeKey(g.productSkuIfNoVariants);
+      const ok = key && supplierMap.has(key);
+      if (ok) matched++; else unmatched++;
+      lines.push('   └─ Product SKU: ' + (g.productSkuIfNoVariants || '-') + ' | ' + (ok ? '✅ مطابق' : '❌ غير مطابق'));
     }
   }
 
-  bar.style.width = '90%';
-  clog('\n📊 Results:');
-  clog('  SKU matches: ' + matched);
-  clog('  Price changes (>2%): ' + priceChanged + ' (↑' + priceUp + ' ↓' + priceDown + ')');
-  clog('  Export rows: ' + priceRows.length);
+  lines.unshift('نتيجة المطابقة: matched=' + matched + ' | unmatched=' + unmatched);
+  lines.unshift('مفاتيح المورد الفريدة: ' + supplierMap.size + ' | المكررة: ' + supplierDuplicateKeys.length);
+  lines.unshift('عمود SKU المختار: ' + selectedSkuColumn);
 
-  document.getElementById('cs1').textContent = matched.toLocaleString();
-  document.getElementById('cs2').textContent = priceChanged.toLocaleString();
-  document.getElementById('cs3').textContent = priceUp.toLocaleString();
-  document.getElementById('cs4').textContent = priceDown.toLocaleString();
-  document.getElementById('cmpStats').classList.remove('hidden');
-  document.getElementById('dlBtn').classList.remove('hidden');
-
-  exportData = { priceRows };
-  bar.style.width = '100%';
-}
-
-function downloadResults() {
-  if (!exportData.priceRows) return;
-  const h1 = ['بيانات المنتج','','','','الأسعار','','','',''];
-  const h2 = ['No.','النوع','أسم المنتج','رمز المنتج sku','سعر المنتج','سعر التكلفة','السعر المخفض','تاريخ بداية التخفيض','تاريخ نهاية التخفيض'];
-  const pd = [h1, h2, ...exportData.priceRows];
-  const ws = XLSX.utils.aoa_to_sheet(pd);
-  ws['!cols'] = [{wch:14},{wch:8},{wch:60},{wch:14},{wch:12},{wch:12},{wch:12},{wch:18},{wch:18}];
-  for (let r = 2; r < pd.length; r++) {
-    const addr = XLSX.utils.encode_cell({r, c: 3});
-    const val = pd[r][3];
-    if (val && String(val).trim()) ws[addr] = {t:'n', v: parseInt(val)};
-    else ws[addr] = {t:'s', v: ''};
-  }
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Salla Product Prices Sheet');
-  XLSX.writeFile(wb, 'salla_price_update_' + new Date().toISOString().slice(0,10) + '.xlsx');
+  log.textContent = lines.join("\n");
 }
 </script>
 </body>
