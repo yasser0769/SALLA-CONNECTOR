@@ -147,12 +147,12 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
       <label>أعمدة المورد الإضافية (اختياري — للتصدير)</label>
       <div class="row" style="gap:8px">
         <div style="flex:1">
-          <span style="font-size:0.7rem;color:var(--text3)">عمود السعر</span>
-          <select id="priceColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
+          <span style="font-size:0.7rem;color:var(--text3)">عمود التكلفة (Cost)</span>
+          <select id="costColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
         </div>
         <div style="flex:1">
-          <span style="font-size:0.7rem;color:var(--text3)">عمود الكمية</span>
-          <select id="qtyColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
+          <span style="font-size:0.7rem;color:var(--text3)">عمود سعر البيع (Retail Price)</span>
+          <select id="retailPriceColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
         </div>
       </div>
     </div>
@@ -180,7 +180,7 @@ let supplierHeaders = [];
 let supplierEncoding = "utf-8";
 let selectedSkuColumn = "";
 let supplierMap = new Map();
-let supplierDuplicateKeys = [];
+let supplierSkuSet = new Set();
 let lastMatchResult = null;
 
 const API_BASE = '/api';
@@ -441,8 +441,13 @@ async function pullProducts() {
 }
 
 // ==================== SUPPLIER CSV ====================
-function normalizeKey(value) {
+function normalizeSku(value) {
   return String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '');
+}
+
+function parseNumeric(value) {
+  const n = parseFloat(String(value || '').trim());
+  return Number.isFinite(n) ? n : null;
 }
 
 function setSupplierEncoding(enc) {
@@ -462,7 +467,7 @@ async function loadSupplierCsv(ev) {
 
   selectedSkuColumn = '';
   supplierMap = new Map();
-  supplierDuplicateKeys = [];
+  supplierSkuSet = new Set();
   document.getElementById('compareBtn').disabled = true;
 
   try {
@@ -515,7 +520,7 @@ function renderSkuColumnOptions(headers) {
   });
   document.getElementById('useSkuColBtn').disabled = false;
 
-  ['priceColumnSelect', 'qtyColumnSelect'].forEach(id => {
+  ['costColumnSelect', 'retailPriceColumnSelect'].forEach(id => {
     const s = document.getElementById(id);
     s.innerHTML = '<option value="">— لا شيء —</option>';
     headers.forEach(h => {
@@ -538,22 +543,36 @@ function renderCsvPreview(rows, headers) {
   preview.classList.remove('hidden');
 }
 
-function buildSupplierMap() {
-  supplierMap = new Map();
-  supplierDuplicateKeys = [];
+function buildSupplierMap(rows, skuCol, costCol, retailCol) {
+  const map = new Map();
+  const skuSet = new Set();
+  let totalRows = 0;
+  let validSkus = 0;
+  let invalidSkus = 0;
 
-  for (const row of supplierRows) {
-    const key = normalizeKey(row[selectedSkuColumn]);
-    if (!key) continue;
+  for (const row of rows) {
+    totalRows++;
+    const raw = row[skuCol];
+    const key = normalizeSku(raw);
 
-    if (supplierMap.has(key)) {
-      supplierDuplicateKeys.push(key);
-      const prev = supplierMap.get(key);
-      supplierMap.set(key, Array.isArray(prev) ? [...prev, row] : [prev, row]);
-    } else {
-      supplierMap.set(key, row);
+    if (!key) {
+      invalidSkus++;
+      continue;
     }
+
+    validSkus++;
+    skuSet.add(key);
+    map.set(key, {
+      cost: costCol ? parseNumeric(row[costCol]) : null,
+      retailPrice: retailCol ? parseNumeric(row[retailCol]) : null,
+    });
   }
+
+  return {
+    supplierMap: map,
+    supplierSkuSet: skuSet,
+    stats: { totalRows, validSkus, invalidSkus },
+  };
 }
 
 function useSkuColumn() {
@@ -564,11 +583,21 @@ function useSkuColumn() {
   }
 
   selectedSkuColumn = col;
-  buildSupplierMap();
+  const costCol = document.getElementById('costColumnSelect').value || '';
+  const retailCol = document.getElementById('retailPriceColumnSelect').value || '';
 
-  const dupCount = supplierDuplicateKeys.length;
-  const dupMsg = dupCount ? ('<br>⚠️ مفاتيح مكررة: ' + dupCount) : '';
-  showSupplierMessage('✅ تم اختيار عمود SKU: <b>' + col + '</b><br>المفاتيح الفريدة: ' + supplierMap.size + dupMsg, dupCount ? 'warn' : 'ok');
+  const result = buildSupplierMap(supplierRows, col, costCol, retailCol);
+  supplierMap = result.supplierMap;
+  supplierSkuSet = result.supplierSkuSet;
+
+  const s = result.stats;
+  showSupplierMessage(
+    '✅ تم اختيار عمود SKU: <b>' + col + '</b>' +
+    '<br>إجمالي الصفوف: ' + s.totalRows +
+    ' | SKU صالح: ' + s.validSkus +
+    ' | غير صالح: ' + s.invalidSkus,
+    s.invalidSkus > 0 ? 'warn' : 'ok'
+  );
 
   if (storeProducts.length) {
     document.getElementById('compareBtn').disabled = false;
@@ -593,9 +622,7 @@ function buildProductGroups(products) {
 
 function getSupplierRow(key) {
   if (!key) return null;
-  const val = supplierMap.get(key);
-  if (!val) return null;
-  return Array.isArray(val) ? val[0] : val;
+  return supplierMap.get(key) || null;
 }
 
 function compareAndUpdate() {
@@ -613,8 +640,6 @@ function compareAndUpdate() {
     return;
   }
 
-  const priceCol = document.getElementById('priceColumnSelect').value || '';
-  const qtyCol = document.getElementById('qtyColumnSelect').value || '';
   const groups = buildProductGroups(storeProducts);
   let matched = 0;
   let unmatched = 0;
@@ -634,12 +659,12 @@ function compareAndUpdate() {
         variant_name: '',
         sku: '',
         matched: '',
-        supplier_price: '',
-        supplier_qty: '',
+        supplier_cost: '',
+        supplier_retail: '',
       });
 
       for (const v of g.variants) {
-        const key = normalizeKey(v.sku);
+        const key = normalizeSku(v.sku);
         const ok = key && supplierMap.has(key);
         if (ok) matched++; else unmatched++;
         const supRow = ok ? getSupplierRow(key) : null;
@@ -654,12 +679,12 @@ function compareAndUpdate() {
           variant_name: v.variantName,
           sku: v.sku || '',
           matched: ok ? 'YES' : 'NO',
-          supplier_price: supRow && priceCol ? (supRow[priceCol] || '') : '',
-          supplier_qty: supRow && qtyCol ? (supRow[qtyCol] || '') : '',
+          supplier_cost: supRow ? (supRow.cost ?? '') : '',
+          supplier_retail: supRow ? (supRow.retailPrice ?? '') : '',
         });
       }
     } else {
-      const key = normalizeKey(g.productSkuIfNoVariants);
+      const key = normalizeSku(g.productSkuIfNoVariants);
       const ok = key && supplierMap.has(key);
       if (ok) matched++; else unmatched++;
       const supRow = ok ? getSupplierRow(key) : null;
@@ -674,19 +699,19 @@ function compareAndUpdate() {
         variant_name: '',
         sku: g.productSkuIfNoVariants || '',
         matched: ok ? 'YES' : 'NO',
-        supplier_price: supRow && priceCol ? (supRow[priceCol] || '') : '',
-        supplier_qty: supRow && qtyCol ? (supRow[qtyCol] || '') : '',
+        supplier_cost: supRow ? (supRow.cost ?? '') : '',
+        supplier_retail: supRow ? (supRow.retailPrice ?? '') : '',
       });
     }
   }
 
   lines.unshift('نتيجة المطابقة: matched=' + matched + ' | unmatched=' + unmatched);
-  lines.unshift('مفاتيح المورد الفريدة: ' + supplierMap.size + ' | المكررة: ' + supplierDuplicateKeys.length);
+  lines.unshift('مفاتيح المورد الفريدة: ' + supplierMap.size + ' | في supplierSkuSet: ' + supplierSkuSet.size);
   lines.unshift('عمود SKU المختار: ' + selectedSkuColumn);
 
   log.textContent = lines.join("\n");
 
-  lastMatchResult = { exportRows, matched, unmatched, priceCol, qtyCol };
+  lastMatchResult = { exportRows, matched, unmatched };
 
   document.getElementById('cs1').textContent = matched.toLocaleString();
   document.getElementById('cs2').textContent = unmatched.toLocaleString();
@@ -703,7 +728,7 @@ function exportMatchedXlsx() {
   }
 
   try {
-    const headers = ['Row Type', 'Product ID', 'Product Name', 'Variant ID', 'Variant Name', 'SKU', 'Matched', 'Supplier Price', 'Supplier Qty'];
+    const headers = ['Row Type', 'Product ID', 'Product Name', 'Variant ID', 'Variant Name', 'SKU', 'Matched', 'Supplier Cost', 'Supplier Retail Price'];
     const data = [headers];
 
     for (const r of lastMatchResult.exportRows) {
@@ -715,8 +740,8 @@ function exportMatchedXlsx() {
         r.variant_name,
         r.sku,
         r.matched,
-        r.supplier_price,
-        r.supplier_qty,
+        r.supplier_cost,
+        r.supplier_retail,
       ]);
     }
 
