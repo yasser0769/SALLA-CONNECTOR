@@ -60,3 +60,9 @@ When Merchant API returns 401/403, backend tries refresh token once, updates ses
 - Matching key is normalized (trim + uppercase + remove spaces/dashes).
 - Duplicate supplier keys are detected and shown in UI.
 - Grouped preview is rendered per Salla product with variants listed below each product header.
+
+
+### Pagination notes for Fetch Products
+- Frontend requests `per_page=100` and keeps paging until metadata indicates last page, or page items are fewer than `per_page` when metadata is absent.
+- Optional UI testing limits: `maxPages` and `maxItems`.
+- UI log prints first-page pagination object for diagnostics.

@@ -8,8 +8,12 @@ const {
   tokenRequest,
 } = require('../_lib/salla');
 
-async function fetchProductsPage(config, accessToken, page) {
-  const resp = await fetch(`${config.apiBase}/admin/v2/products?page=${page}`, {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchProductsPage(config, accessToken, page, perPage) {
+  const resp = await fetch(`${config.apiBase}/admin/v2/products?page=${page}&per_page=${perPage}`, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -19,14 +23,24 @@ async function fetchProductsPage(config, accessToken, page) {
   return parseUpstreamResponse(resp);
 }
 
-function hasNextPage(payload, page, maxPages) {
-  if (page >= maxPages) return false;
-  const pagination = payload && payload.pagination;
-  if (pagination && Number.isFinite(pagination.currentPage) && Number.isFinite(pagination.totalPages)) {
-    return pagination.currentPage < pagination.totalPages;
+async function fetchWithRetry(config, accessToken, page, perPage, id) {
+  let attempt = 0;
+  let last;
+  while (attempt < 3) {
+    const upstream = await fetchProductsPage(config, accessToken, page, perPage);
+    console.log(`[salla:${id}] products status=${upstream.status} page=${page} attempt=${attempt + 1}`);
+
+    if (upstream.status !== 429 && (upstream.status < 500 || upstream.status > 599)) {
+      return upstream;
+    }
+
+    last = upstream;
+    attempt += 1;
+    if (attempt < 3) {
+      await sleep(300 * attempt);
+    }
   }
-  const links = pagination && pagination.links;
-  return Boolean(links && links.next);
+  return last;
 }
 
 module.exports = async function handler(req, res) {
@@ -41,45 +55,17 @@ module.exports = async function handler(req, res) {
     return sendJson(res, 401, { error: 'Not connected. Connect first.', debug_id: id });
   }
 
-  async function run(accessToken) {
-    const all = [];
-    let page = 1;
-    let lastPayload = null;
+  const page = Number(req.query && req.query.page) > 0 ? Number(req.query.page) : 1;
+  const perPage = Number(req.query && req.query.per_page) > 0 ? Number(req.query.per_page) : 100;
 
-    while (page <= 5) {
-      const upstream = await fetchProductsPage(config, accessToken, page);
-      console.log(`[salla:${id}] products status=${upstream.status} page=${page}`);
-      if (upstream.status >= 400) {
-        return { failed: true, status: upstream.status, payload: upstream.body };
-      }
-      if (Array.isArray(upstream.body && upstream.body.data)) {
-        all.push(...upstream.body.data);
-      }
-      lastPayload = upstream.body;
-      if (!hasNextPage(upstream.body, page, 5)) break;
-      page += 1;
-    }
-
-    return {
-      failed: false,
-      status: 200,
-      payload: {
-        success: true,
-        count: all.length,
-        data: all,
-        pagination: {
-          pages_fetched: page,
-          limited_to: 5,
-          last: (lastPayload && lastPayload.pagination) || null,
-        },
-      },
-    };
+  async function callOnce(accessToken) {
+    return fetchWithRetry(config, accessToken, page, perPage, id);
   }
 
   try {
-    let result = await run(session.access_token);
+    let upstream = await callOnce(session.access_token);
 
-    if (result.failed && (result.status === 401 || result.status === 403) && session.refresh_token) {
+    if ((upstream.status === 401 || upstream.status === 403) && session.refresh_token) {
       const refreshed = await tokenRequest(config, {
         grant_type: 'refresh_token',
         refresh_token: session.refresh_token,
@@ -96,24 +82,18 @@ module.exports = async function handler(req, res) {
           updated_at: Date.now(),
         };
         writeSession(res, config, updated);
-        result = await run(updated.access_token);
+        upstream = await callOnce(updated.access_token);
       }
     }
 
-    if (result.failed) {
-      return sendJson(res, result.status, {
-        status: result.status,
-        body: result.payload,
-        debug_id: id,
-      });
-    }
-
-    return sendJson(res, 200, {
-      ...result.payload,
+    return sendJson(res, upstream.status, {
+      status: upstream.status,
+      body: upstream.body,
       debug_id: id,
-      first_item: result.payload.data[0] || null,
+      page,
+      per_page: perPage,
     });
   } catch (error) {
-    return sendJson(res, 500, { error: error.message, debug_id: id });
+    return sendJson(res, 500, { error: error.message, debug_id: id, page, per_page: perPage });
   }
 };

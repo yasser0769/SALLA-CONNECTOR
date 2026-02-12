@@ -94,6 +94,10 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
   <div class="card hidden" id="step2">
     <h2><span class="num">2</span> سحب المنتجات من المتجر</h2>
     <p style="font-size:0.8rem;color:var(--text2);margin-bottom:14px">سحب جميع المنتجات مع الأسعار والكميات والخيارات مباشرة من API سلة</p>
+    <div class="row" style="gap:8px;margin-bottom:10px">
+      <input id="maxPagesInput" type="number" min="1" placeholder="maxPages (اختياري)" style="max-width:190px">
+      <input id="maxItemsInput" type="number" min="1" placeholder="maxItems (اختياري)" style="max-width:190px">
+    </div>
     <button class="btn btn-accent" id="pullBtn" onclick="pullProducts()">📦 Fetch Products</button>
     <div class="prog hidden" id="pullProg"><div class="bar" id="pullBar"></div></div>
     <div class="log hidden" id="pullLog"></div>
@@ -234,40 +238,6 @@ async function testToken() {
     showStatus('authStatus', '❌ ' + e.message, 'err');
   }
 
-  if (!silent) showStatus('authStatus', '⏳ جاري تجديد Access Token...', 'info');
-
-  const data = await sallaApi('refresh', {
-    refresh_token: refreshTokenVal,
-  });
-
-  if (!data.access_token) {
-    throw new Error(formatApiError(data, 'Refresh failed'));
-  }
-
-  accessToken = data.access_token;
-  refreshTokenVal = data.refresh_token || refreshTokenVal;
-  localStorage.setItem('salla_access_token', accessToken);
-  localStorage.setItem('salla_refresh_token', refreshTokenVal);
-  if (!silent) showStatus('authStatus', '✅ تم تجديد التوكن!', 'ok');
-  const tokenText = document.getElementById('tokenText');
-  if (tokenText) tokenText.textContent = accessToken.slice(0, 20) + '...' + accessToken.slice(-10);
-  return data;
-}
-
-async function logout() {
-  await fetch(API_BASE + '/salla/logout');
-  document.getElementById('step2').classList.add('hidden');
-  document.getElementById('step3').classList.add('hidden');
-  showStatus('authStatus', 'تم تسجيل الخروج من الجلسة.', 'warn');
-}
-
-async function logout() {
-  await fetch(API_BASE + '/salla/logout');
-  document.getElementById('step2').classList.add('hidden');
-  document.getElementById('step3').classList.add('hidden');
-  showStatus('authStatus', 'تم تسجيل الخروج من الجلسة.', 'warn');
-}
-
 async function logout() {
   await fetch(API_BASE + '/salla/logout');
   document.getElementById('step2').classList.add('hidden');
@@ -283,54 +253,131 @@ async function doRefreshToken() {
   showStatus('authStatus', 'ℹ️ يتم التجديد تلقائياً عند 401. استخدم Test Token أو Fetch Products.', 'info');
 }
 
+function extractItems(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload.data)) return payload.data;
+  if (payload.data && Array.isArray(payload.data.data)) return payload.data.data;
+  if (Array.isArray(payload.items)) return payload.items;
+  return [];
+}
+
+function extractPagination(payload) {
+  if (!payload) return null;
+  return payload.pagination || payload.meta || payload.links || null;
+}
+
+function extractTotalPages(payload) {
+  const p = extractPagination(payload);
+  if (!p || typeof p !== 'object') return null;
+  const candidates = [p.total_pages, p.totalPages, p.last_page, p.lastPage, p.pages];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function fetchProductsPageWithRetry(page, perPage, retries = 2) {
+  let attempt = 0;
+  while (true) {
+    const resp = await fetch(API_BASE + '/salla/products?page=' + page + '&per_page=' + perPage);
+    const parsed = await parseJsonResponse(resp);
+    if (parsed.ok) return parsed;
+
+    const retryable = parsed.status === 429 || (parsed.status >= 500 && parsed.status <= 599);
+    if (!retryable || attempt >= retries) return parsed;
+
+    attempt += 1;
+    await delay(300 * attempt);
+  }
+}
+
 async function pullProducts() {
   const log = document.getElementById('pullLog');
   const prog = document.getElementById('pullProg');
   const bar = document.getElementById('pullBar');
   log.classList.remove('hidden'); log.textContent = '';
-  prog.classList.remove('hidden'); bar.style.width = '10%';
+  prog.classList.remove('hidden'); bar.style.width = '5%';
   document.getElementById('pullBtn').disabled = true;
 
-  function plog(m) { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; }
+  function plog(m) { log.textContent += m + '\\n'; log.scrollTop = log.scrollHeight; }
+
+  const perPage = 100;
+  const maxPagesInput = Number(document.getElementById('maxPagesInput').value || 0);
+  const maxItemsInput = Number(document.getElementById('maxItemsInput').value || 0);
+  const userMaxPages = Number.isFinite(maxPagesInput) && maxPagesInput > 0 ? maxPagesInput : null;
+  const userMaxItems = Number.isFinite(maxItemsInput) && maxItemsInput > 0 ? maxItemsInput : null;
 
   try {
-    plog('📄 Calling /api/salla/products ...');
-    const resp = await fetch(API_BASE + '/salla/products');
-    const { data, status, ok } = await parseJsonResponse(resp);
+    storeProducts = [];
+    let page = 1;
+    let totalPages = null;
 
-    if (!ok) {
-      const debug = data && data.debug_id ? (' (debug_id: ' + data.debug_id + ')') : '';
-      plog('❌ Upstream error HTTP ' + status + debug);
-      plog(pretty(data));
-      showStatus('authStatus', '❌ فشل جلب المنتجات (HTTP ' + status + ')' + debug + '<br><pre>' + pretty(data) + '</pre>', 'err');
-      document.getElementById('pullBtn').disabled = false;
-      return;
+    while (true) {
+      const uiTotal = totalPages || userMaxPages || '?';
+      plog('📄 Fetching page ' + page + ' / ' + uiTotal);
+
+      const { data, status, ok } = await fetchProductsPageWithRetry(page, perPage, 2);
+
+      if (!ok) {
+        const debug = data && data.debug_id ? (' (debug_id: ' + data.debug_id + ')') : '';
+        plog('❌ Upstream error HTTP ' + status + debug);
+        plog(pretty(data));
+        showStatus('authStatus', '❌ فشل جلب المنتجات (HTTP ' + status + ')' + debug + '<br><pre>' + pretty(data) + '</pre>', 'err');
+        break;
+      }
+
+      const body = data.body || data;
+      const pageItems = extractItems(body);
+      const paginationObj = extractPagination(body);
+      if (page === 1) {
+        plog('🧭 Pagination(first page): ' + JSON.stringify(paginationObj || {}, null, 2));
+      }
+
+      storeProducts.push(...pageItems);
+      plog('✅ Fetched ' + pageItems.length + ' items this page | total so far: ' + storeProducts.length);
+
+      if (!totalPages) totalPages = extractTotalPages(body);
+
+      if (userMaxItems && storeProducts.length >= userMaxItems) {
+        storeProducts = storeProducts.slice(0, userMaxItems);
+        plog('⛔ stop by maxItems=' + userMaxItems);
+        break;
+      }
+
+      const reachedTotalPages = totalPages ? page >= totalPages : false;
+      const reachedUserMaxPages = userMaxPages ? page >= userMaxPages : false;
+      const noMetaStop = !totalPages && pageItems.length < perPage;
+      const progressBase = totalPages || userMaxPages || Math.max(page + 1, 2);
+      bar.style.width = Math.min(98, Math.round((page / progressBase) * 100)) + '%';
+
+      if (reachedTotalPages || reachedUserMaxPages || noMetaStop || pageItems.length === 0) break;
+
+      page += 1;
+      await delay(200);
     }
 
-    storeProducts = Array.isArray(data.data) ? data.data : [];
     bar.style.width = '100%';
-    plog('✅ Products fetched: ' + storeProducts.length);
-    if (storeProducts[0]) {
-      plog('First item: ' + pretty(storeProducts[0]).slice(0, 500));
-    }
+    plog('🏁 Done. Total products: ' + storeProducts.length);
 
     document.getElementById('ps1').textContent = storeProducts.length.toLocaleString();
-
     let withSku = 0, withOptions = 0, totalSkus = 0;
     for (const p of storeProducts) {
       if (p.sku) withSku++;
       if (p.skus && p.skus.length > 0) { withOptions++; totalSkus += p.skus.length; }
       else if (p.sku) totalSkus++;
     }
-
     document.getElementById('ps2').textContent = withSku.toLocaleString();
     document.getElementById('ps3').textContent = withOptions.toLocaleString();
     document.getElementById('ps4').textContent = totalSkus.toLocaleString();
     document.getElementById('pullStats').classList.remove('hidden');
     document.getElementById('step3').classList.remove('hidden');
 
-    const debug = data.debug_id ? (' (debug_id: ' + data.debug_id + ')') : '';
-    showStatus('authStatus', '✅ تم جلب المنتجات بنجاح' + debug, 'ok');
+    if (storeProducts.length > 0) {
+      showStatus('authStatus', '✅ تم جلب ' + storeProducts.length + ' منتج بنجاح.', 'ok');
+    }
   } catch (e) {
     plog('❌ ' + e.message);
     showStatus('authStatus', '❌ ' + e.message, 'err');
