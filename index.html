@@ -450,6 +450,18 @@ function parseNumeric(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function extractAmount(val) {
+  if (val == null) return null;
+  if (typeof val === 'object') return parseNumeric(val.amount);
+  return parseNumeric(val);
+}
+
+function percentChanged(oldVal, newVal) {
+  if (newVal == null) return false;
+  if (oldVal == null || oldVal === 0) return newVal !== 0;
+  return Math.abs((newVal - oldVal) / oldVal) > 0.02;
+}
+
 function setSupplierEncoding(enc) {
   supplierEncoding = enc;
   document.getElementById('encodingInfo').textContent = 'الترميز الحالي: ' + enc;
@@ -623,6 +635,76 @@ function buildProductGroups(products) {
 function getSupplierRow(key) {
   if (!key) return null;
   return supplierMap.get(key) || null;
+}
+
+function buildChangeReport(products, sMap, skuSet) {
+  const report = [];
+
+  for (const p of products) {
+    const variants = Array.isArray(p.skus) ? p.skus : [];
+    const isSimple = variants.length === 0;
+
+    const entry = {
+      productId: p.id,
+      hasPriceChanges: false,
+      hasQuantityChanges: false,
+      parentRow: { productId: p.id, productName: p.name || '' },
+      variantRows: [],
+    };
+
+    const sources = isSimple
+      ? [{ sku: p.sku || '', variantId: null, src: p }]
+      : variants.map(v => ({ sku: v.sku || '', variantId: v.id, src: v }));
+
+    for (const { sku, variantId, src } of sources) {
+      const key = normalizeSku(sku);
+      if (!key) continue;
+
+      const sup = sMap.get(key) || null;
+      const inSupplier = skuSet.has(key);
+
+      // Current Salla values
+      const oldCost = extractAmount(src.cost_price);
+      const oldPrice = extractAmount(src.price);
+      const oldSalePrice = extractAmount(src.sale_price);
+      const oldQty = parseNumeric(src.stock_quantity != null ? src.stock_quantity : src.quantity);
+
+      // New supplier values
+      const newCost = sup ? sup.cost : null;
+      const newPrice = sup ? sup.retailPrice : null;
+      const newSalePrice = sup ? sup.retailPrice : null;
+      const newQty = inSupplier ? 500 : 0;
+
+      // >2% change detection
+      const costDiff = percentChanged(oldCost, newCost);
+      const priceDiff = percentChanged(oldPrice, newPrice);
+      const saleDiff = percentChanged(oldSalePrice, newSalePrice);
+      const qtyDiff = percentChanged(oldQty, newQty);
+
+      const priceChanged = costDiff || priceDiff || saleDiff;
+      const quantityChanged = qtyDiff;
+
+      if (priceChanged) entry.hasPriceChanges = true;
+      if (quantityChanged) entry.hasQuantityChanges = true;
+
+      entry.variantRows.push({
+        sku,
+        variantId,
+        priceChanged,
+        quantityChanged,
+        newValues: {
+          cost: newCost,
+          price: newPrice,
+          salePrice: newSalePrice,
+          quantity: newQty,
+        },
+      });
+    }
+
+    report.push(entry);
+  }
+
+  return report;
 }
 
 function compareAndUpdate() {
