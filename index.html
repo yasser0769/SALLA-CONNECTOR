@@ -861,30 +861,33 @@ function generatePriceXlsx(priceExportRows, products) {
 
   function pv(nv, old) { return nv != null ? nv : (old != null ? old : ''); }
 
-  /* ---- template structure (exact Salla order) ---- */
+  /* ---- template structure (exact Salla format) ---- */
   var groupRow = [
-    '',                  // A  نوع الصنف  (no group)
-    'معلومات المنتج',   // B  اسم المنتج
-    'خيارات المنتج',    // C  خيارات المنتج
-    'أعمدة المطابقة',   // D  رمز المنتج sku
-    '',                  // E  السعر            (merged with D)
-    '',                  // F  سعر التكلفة      (merged with D)
-    '',                  // G  سعر التخفيض      (merged with D)
-    '',                  // H  تاريخ نهاية التخفيض (merged with D)
+    'بيانات المنتج',    // A  No.
+    '',                  // B  النوع           (merged with A)
+    '',                  // C  أسم المنتج      (merged with A)
+    '',                  // D  رمز المنتج sku  (merged with A)
+    'الأسعار',           // E  سعر المنتج
+    '',                  // F  سعر التكلفة      (merged with E)
+    '',                  // G  السعر المخفض     (merged with E)
+    '',                  // H  تاريخ بداية التخفيض (merged with E)
+    '',                  // I  تاريخ نهاية التخفيض (merged with E)
   ];
   var headerRow = [
-    'نوع الصنف',
-    'اسم المنتج',
-    'خيارات المنتج',
+    'No.',
+    'النوع',
+    'أسم المنتج',
     'رمز المنتج sku',
-    'السعر',
+    'سعر المنتج',
     'سعر التكلفة',
-    'سعر التخفيض',
+    'السعر المخفض',
+    'تاريخ بداية التخفيض',
     'تاريخ نهاية التخفيض',
   ];
 
   var aoa = [groupRow, headerRow];
   var skuCells = [];  // {r, sku} – rows needing ="…" formula
+  var rowNum = 0;     // auto-increment No. column
 
   /* ---- group parent+children from the flat array ---- */
   var groups = [], cur = null;
@@ -903,33 +906,38 @@ function generatePriceXlsx(priceExportRows, products) {
     if (isSimple) {
       var v  = g.variants[0];
       var nv = v.newValues;
+      rowNum++;
       skuCells.push({ r: aoa.length, sku: v.sku });
       aoa.push([
+        rowNum,
         'منتج',
         p.name || '',
-        '',
         v.sku,
         pv(nv.price,     extractAmount(p.price)),
         pv(nv.cost,      extractAmount(p.cost_price)),
         pv(nv.salePrice, extractAmount(p.sale_price)),
+        p.sale_start || '',
         p.sale_end || '',
       ]);
     } else {
       /* parent row – identification only, no prices */
-      aoa.push(['منتج', p.name || '', '', '', '', '', '', '']);
+      rowNum++;
+      aoa.push([rowNum, 'منتج', p.name || '', '', '', '', '', '', '']);
 
       g.variants.forEach(function(v) {
         var vd = variantMap.get(v.variantId) || {};
         var nv = v.newValues;
+        rowNum++;
         skuCells.push({ r: aoa.length, sku: v.sku });
         aoa.push([
+          rowNum,
           'خيار',
-          '',
           formatVariantOptions(vd),
           v.sku,
           pv(nv.price,     extractAmount(vd.price)),
           pv(nv.cost,      extractAmount(vd.cost_price)),
           pv(nv.salePrice, extractAmount(vd.sale_price)),
+          vd.sale_start || p.sale_start || '',
           vd.sale_end || p.sale_end || '',
         ]);
       });
@@ -939,9 +947,10 @@ function generatePriceXlsx(priceExportRows, products) {
   /* ---- build worksheet ---- */
   var ws = XLSX.utils.aoa_to_sheet(aoa);
 
-  /* merge group header: أعمدة المطابقة  D1:H1 */
+  /* merge group headers: بيانات المنتج A1:D1, الأسعار E1:I1 */
   ws['!merges'] = [
-    { s: { r: 0, c: 3 }, e: { r: 0, c: 7 } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
+    { s: { r: 0, c: 4 }, e: { r: 0, c: 8 } },
   ];
 
   /* SKU cells → text formula  ="SKU_VALUE" */
@@ -952,13 +961,14 @@ function generatePriceXlsx(priceExportRows, products) {
 
   /* column widths */
   ws['!cols'] = [
-    { wch: 12 },  // نوع الصنف
-    { wch: 35 },  // اسم المنتج
-    { wch: 25 },  // خيارات المنتج
+    { wch: 6 },   // No.
+    { wch: 10 },  // النوع
+    { wch: 35 },  // أسم المنتج
     { wch: 20 },  // رمز المنتج sku
-    { wch: 12 },  // السعر
+    { wch: 12 },  // سعر المنتج
     { wch: 14 },  // سعر التكلفة
-    { wch: 14 },  // سعر التخفيض
+    { wch: 14 },  // السعر المخفض
+    { wch: 22 },  // تاريخ بداية التخفيض
     { wch: 22 },  // تاريخ نهاية التخفيض
   ];
 
@@ -980,24 +990,27 @@ function generateQuantityXlsx(quantityExportRows, products) {
       p.skus.forEach(function(v) { variantMap.set(v.id, v); });
   });
 
-  /* ---- template structure (exact Salla order) ---- */
+  /* ---- template structure (exact Salla format) ---- */
   var groupRow = [
-    '',                  // A  نوع الصنف  (no group)
-    'معلومات المنتج',   // B  اسم المنتج
-    'خيارات المنتج',    // C  خيارات المنتج
-    'أعمدة المطابقة',   // D  رمز المنتج sku
-    '',                  // E  الكمية  (merged with D)
+    'بيانات المنتج',    // A  No.
+    '',                  // B  النوع           (merged with A)
+    '',                  // C  أسم المنتج      (merged with A)
+    '',                  // D  رمز المنتج sku  (merged with A)
+    'الكميات',           // E  غير محدود الكمية
+    '',                  // F  الكمية           (merged with E)
   ];
   var headerRow = [
-    'نوع الصنف',
-    'اسم المنتج',
-    'خيارات المنتج',
+    'No.',
+    'النوع',
+    'أسم المنتج',
     'رمز المنتج sku',
+    'غير محدود الكمية',
     'الكمية',
   ];
 
   var aoa = [groupRow, headerRow];
   var skuCells = [];  // {r, sku}
+  var rowNum = 0;     // auto-increment No. column
 
   /* ---- group parent+children from the flat array ---- */
   var groups = [], cur = null;
@@ -1015,26 +1028,31 @@ function generateQuantityXlsx(quantityExportRows, products) {
 
     if (isSimple) {
       var v = g.variants[0];
+      rowNum++;
       skuCells.push({ r: aoa.length, sku: v.sku });
       aoa.push([
+        rowNum,
         'منتج',
         p.name || '',
-        '',
         v.sku,
+        '',
         v.newValues.quantity,
       ]);
     } else {
       /* parent row – identification only, no quantity */
-      aoa.push(['منتج', p.name || '', '', '', '']);
+      rowNum++;
+      aoa.push([rowNum, 'منتج', p.name || '', '', '', '']);
 
       g.variants.forEach(function(v) {
         var vd = variantMap.get(v.variantId) || {};
+        rowNum++;
         skuCells.push({ r: aoa.length, sku: v.sku });
         aoa.push([
+          rowNum,
           'خيار',
-          '',
           formatVariantOptions(vd),
           v.sku,
+          '',
           v.newValues.quantity,
         ]);
       });
@@ -1044,9 +1062,10 @@ function generateQuantityXlsx(quantityExportRows, products) {
   /* ---- build worksheet ---- */
   var ws = XLSX.utils.aoa_to_sheet(aoa);
 
-  /* merge group header: أعمدة المطابقة  D1:E1 */
+  /* merge group headers: بيانات المنتج A1:D1, الكميات E1:F1 */
   ws['!merges'] = [
-    { s: { r: 0, c: 3 }, e: { r: 0, c: 4 } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
+    { s: { r: 0, c: 4 }, e: { r: 0, c: 5 } },
   ];
 
   /* SKU cells → text formula  ="SKU_VALUE" */
@@ -1057,10 +1076,11 @@ function generateQuantityXlsx(quantityExportRows, products) {
 
   /* column widths */
   ws['!cols'] = [
-    { wch: 12 },  // نوع الصنف
-    { wch: 35 },  // اسم المنتج
-    { wch: 25 },  // خيارات المنتج
+    { wch: 6 },   // No.
+    { wch: 10 },  // النوع
+    { wch: 35 },  // أسم المنتج
     { wch: 20 },  // رمز المنتج sku
+    { wch: 18 },  // غير محدود الكمية
     { wch: 10 },  // الكمية
   ];
 
