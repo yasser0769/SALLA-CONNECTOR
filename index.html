@@ -237,7 +237,6 @@ async function testToken() {
   } catch (e) {
     showStatus('authStatus', '❌ ' + e.message, 'err');
   }
-}
 
 async function logout() {
   await fetch(API_BASE + '/salla/logout');
