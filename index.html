@@ -562,17 +562,21 @@ function parseXlsxBuffer(buffer) {
   if (aoa.length <= hdrIdx) return { headers: [], rows: [] };
 
   var rawHeaders = aoa[hdrIdx];
-  var headers = rawHeaders.map(function(h) { return String(h == null ? '' : h).trim(); })
-                          .filter(function(h) { return h !== ''; });
+  var colMap = [];   // {idx: original column, name: header}
+  for (var c = 0; c < rawHeaders.length; c++) {
+    var h = String(rawHeaders[c] == null ? '' : rawHeaders[c]).trim();
+    if (h !== '') colMap.push({ idx: c, name: h });
+  }
+  var headers = colMap.map(function(e) { return e.name; });
 
   var rows = [];
   for (var i = hdrIdx + 1; i < aoa.length; i++) {
     var raw = aoa[i];
     var obj = {};
     var hasValue = false;
-    for (var c = 0; c < headers.length; c++) {
-      var val = String(raw[c] == null ? '' : raw[c]).trim();
-      obj[headers[c]] = val;
+    for (var c = 0; c < colMap.length; c++) {
+      var val = String(raw[colMap[c].idx] == null ? '' : raw[colMap[c].idx]).trim();
+      obj[colMap[c].name] = val;
       if (val) hasValue = true;
     }
     if (hasValue) rows.push(obj);
@@ -596,17 +600,22 @@ function parseCsvBuffer(buffer) {
   var hdrIdx = SUPPLIER_HEADER_ROW - 1;
   if (allRows.length <= hdrIdx) return { headers: [], rows: [] };
 
-  var headers = allRows[hdrIdx].map(function(h) { return String(h == null ? '' : h).trim(); })
-                               .filter(function(h) { return h !== ''; });
+  var rawHeaders = allRows[hdrIdx];
+  var colMap = [];
+  for (var c = 0; c < rawHeaders.length; c++) {
+    var h = String(rawHeaders[c] == null ? '' : rawHeaders[c]).trim();
+    if (h !== '') colMap.push({ idx: c, name: h });
+  }
+  var headers = colMap.map(function(e) { return e.name; });
 
   var rows = [];
   for (var i = hdrIdx + 1; i < allRows.length; i++) {
     var raw = allRows[i];
     var obj = {};
     var hasValue = false;
-    for (var c = 0; c < headers.length; c++) {
-      var val = String(raw[c] == null ? '' : raw[c]).trim();
-      obj[headers[c]] = val;
+    for (var c = 0; c < colMap.length; c++) {
+      var val = String(raw[colMap[c].idx] == null ? '' : raw[colMap[c].idx]).trim();
+      obj[colMap[c].name] = val;
       if (val) hasValue = true;
     }
     if (hasValue) rows.push(obj);
