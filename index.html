@@ -732,6 +732,137 @@ function buildExportRows(changeReport) {
   return { priceExportRows, quantityExportRows };
 }
 
+/* ── Salla Price-Import XLSX ─────────────────────────────────── */
+
+function formatVariantOptions(variant) {
+  if (!variant) return '';
+  if (variant.name) return variant.name;
+  if (Array.isArray(variant.options))
+    return variant.options.map(function(o) { return o.value || o.name || ''; }).join(' / ');
+  if (variant.options && typeof variant.options === 'object')
+    return Object.values(variant.options).join(' / ');
+  return '';
+}
+
+function generatePriceXlsx(priceExportRows, products) {
+  /* ---- lookup maps ---- */
+  var productMap = new Map();
+  var variantMap = new Map();
+  (products || []).forEach(function(p) {
+    productMap.set(p.id, p);
+    if (Array.isArray(p.skus))
+      p.skus.forEach(function(v) { variantMap.set(v.id, v); });
+  });
+
+  function pv(nv, old) { return nv != null ? nv : (old != null ? old : ''); }
+
+  /* ---- template structure (exact Salla order) ---- */
+  var groupRow = [
+    '',                  // A  نوع الصنف  (no group)
+    'معلومات المنتج',   // B  اسم المنتج
+    'خيارات المنتج',    // C  خيارات المنتج
+    'أعمدة المطابقة',   // D  رمز المنتج sku
+    '',                  // E  السعر            (merged with D)
+    '',                  // F  سعر التكلفة      (merged with D)
+    '',                  // G  سعر التخفيض      (merged with D)
+    '',                  // H  تاريخ نهاية التخفيض (merged with D)
+  ];
+  var headerRow = [
+    'نوع الصنف',
+    'اسم المنتج',
+    'خيارات المنتج',
+    'رمز المنتج sku',
+    'السعر',
+    'سعر التكلفة',
+    'سعر التخفيض',
+    'تاريخ نهاية التخفيض',
+  ];
+
+  var aoa = [groupRow, headerRow];
+  var skuCells = [];  // {r, sku} – rows needing ="…" formula
+
+  /* ---- group parent+children from the flat array ---- */
+  var groups = [], cur = null;
+  priceExportRows.forEach(function(row) {
+    if (row.type === 'parent') { cur = { parent: row, variants: [] }; groups.push(cur); }
+    else if (cur) cur.variants.push(row);
+  });
+
+  /* ---- build data rows ---- */
+  groups.forEach(function(g) {
+    var p = productMap.get(g.parent.productId);
+    if (!p) return;
+
+    var isSimple = g.variants.length === 1 && g.variants[0].variantId === null;
+
+    if (isSimple) {
+      var v  = g.variants[0];
+      var nv = v.newValues;
+      skuCells.push({ r: aoa.length, sku: v.sku });
+      aoa.push([
+        'منتج',
+        p.name || '',
+        '',
+        v.sku,
+        pv(nv.price,     extractAmount(p.price)),
+        pv(nv.cost,      extractAmount(p.cost_price)),
+        pv(nv.salePrice, extractAmount(p.sale_price)),
+        p.sale_end || '',
+      ]);
+    } else {
+      /* parent row – identification only, no prices */
+      aoa.push(['منتج', p.name || '', '', '', '', '', '', '']);
+
+      g.variants.forEach(function(v) {
+        var vd = variantMap.get(v.variantId) || {};
+        var nv = v.newValues;
+        skuCells.push({ r: aoa.length, sku: v.sku });
+        aoa.push([
+          'خيار',
+          '',
+          formatVariantOptions(vd),
+          v.sku,
+          pv(nv.price,     extractAmount(vd.price)),
+          pv(nv.cost,      extractAmount(vd.cost_price)),
+          pv(nv.salePrice, extractAmount(vd.sale_price)),
+          vd.sale_end || p.sale_end || '',
+        ]);
+      });
+    }
+  });
+
+  /* ---- build worksheet ---- */
+  var ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  /* merge group header: أعمدة المطابقة  D1:H1 */
+  ws['!merges'] = [
+    { s: { r: 0, c: 3 }, e: { r: 0, c: 7 } },
+  ];
+
+  /* SKU cells → text formula  ="SKU_VALUE" */
+  skuCells.forEach(function(entry) {
+    var ref = XLSX.utils.encode_cell({ r: entry.r, c: 3 });
+    ws[ref] = { t: 'str', f: '"' + entry.sku.replace(/"/g, '""') + '"' };
+  });
+
+  /* column widths */
+  ws['!cols'] = [
+    { wch: 12 },  // نوع الصنف
+    { wch: 35 },  // اسم المنتج
+    { wch: 25 },  // خيارات المنتج
+    { wch: 20 },  // رمز المنتج sku
+    { wch: 12 },  // السعر
+    { wch: 14 },  // سعر التكلفة
+    { wch: 14 },  // سعر التخفيض
+    { wch: 22 },  // تاريخ نهاية التخفيض
+  ];
+
+  /* ---- write file ---- */
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'الأسعار');
+  XLSX.writeFile(wb, 'prices-export.xlsx');
+}
+
 function compareAndUpdate() {
   const log = document.getElementById('cmpLog');
   log.classList.remove('hidden');
