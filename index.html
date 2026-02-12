@@ -111,15 +111,15 @@ body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);
     </div>
   </div>
 
-  <!-- STEP 3: Supplier CSV -->
+  <!-- STEP 3: Supplier file -->
   <div class="card hidden" id="step3">
-    <h2><span class="num">3</span> رفع CSV المورد ومطابقة SKU</h2>
-    <p style="font-size:0.8rem;color:var(--text2);margin-bottom:12px">ارفع CSV، اختر عمود SKU، ثم راجع معاينة المطابقة المجمّعة (منتج + خياراته).</p>
+    <h2><span class="num">3</span> رفع ملف المورد ومطابقة SKU</h2>
+    <p style="font-size:0.8rem;color:var(--text2);margin-bottom:12px">ارفع ملف المورد (XLSX أو CSV)، اختر عمود SKU، ثم راجع معاينة المطابقة المجمّعة (منتج + خياراته).</p>
 
     <div class="ff">
-      <label>ملف المورد (CSV فقط)</label>
-      <input id="supplierCsvInput" type="file" accept=".csv,text/csv" onchange="loadSupplierCsv(event)">
-      <div class="hint">يدعم UTF-8 وWindows-1256 لملفات Excel العربية.</div>
+      <label>ملف المورد (XLSX أو CSV)</label>
+      <input id="supplierCsvInput" type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="loadSupplierFile(event)">
+      <div class="hint">يدعم XLSX مباشرة. للـ CSV يدعم UTF-8 وWindows-1256. الهيدر يُقرأ من الصف 7.</div>
     </div>
 
     <div class="row" style="gap:8px;margin-bottom:10px">
@@ -488,7 +488,9 @@ function showSupplierMessage(msg, type) {
   el.innerHTML = msg;
 }
 
-async function loadSupplierCsv(ev) {
+const SUPPLIER_HEADER_ROW = 7;   // 1-based: row 7 = headers, row 8+ = data
+
+async function loadSupplierFile(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
 
@@ -501,21 +503,24 @@ async function loadSupplierCsv(ev) {
   document.getElementById('exportStats').classList.add('hidden');
   document.getElementById('exportBtnsRow').classList.add('hidden');
 
+  const isXlsx = /\.xlsx?$/i.test(file.name);
+
   try {
     const buffer = await file.arrayBuffer();
-    const decoder = new TextDecoder(supplierEncoding, { fatal: false });
-    const text = decoder.decode(buffer);
+    var headers, rows;
 
-    const parsed = Papa.parse(text, {
-      header: true,
-      skipEmptyLines: true,
-      transformHeader: h => String(h || '').trim(),
-      transform: v => String(v || '').trim(),
-    });
+    if (isXlsx) {
+      var result = parseXlsxBuffer(buffer);
+      headers = result.headers;
+      rows = result.rows;
+    } else {
+      var result = parseCsvBuffer(buffer);
+      headers = result.headers;
+      rows = result.rows;
+    }
 
-    const headers = (parsed.meta && parsed.meta.fields) || [];
     if (!headers.length) {
-      showSupplierMessage('❌ الملف لا يحتوي Header واضح. تأكد أن الصف الأول فيه أسماء أعمدة.', 'err');
+      showSupplierMessage('❌ الملف لا يحتوي Header واضح في الصف ' + SUPPLIER_HEADER_ROW + '.', 'err');
       return;
     }
 
@@ -524,7 +529,7 @@ async function loadSupplierCsv(ev) {
     }
 
     supplierHeaders = headers;
-    supplierRows = (parsed.data || []).filter(row => Object.values(row).some(v => String(v || '').trim()));
+    supplierRows = rows;
 
     renderSkuColumnOptions(headers);
     renderCsvPreview(supplierRows, headers);
@@ -535,10 +540,79 @@ async function loadSupplierCsv(ev) {
       return;
     }
 
-    showSupplierMessage('✅ تم تحميل CSV بنجاح: ' + file.name + ' | عدد الصفوف: ' + supplierRows.length.toLocaleString(), 'ok');
+    var fmt = isXlsx ? 'XLSX' : 'CSV';
+    showSupplierMessage(
+      '✅ تم تحميل ' + fmt + ' بنجاح: ' + file.name +
+      ' | هيدر من الصف ' + SUPPLIER_HEADER_ROW +
+      ' | عدد الصفوف: ' + supplierRows.length.toLocaleString(), 'ok');
   } catch (e) {
-    showSupplierMessage('❌ فشل قراءة CSV: ' + e.message, 'err');
+    showSupplierMessage('❌ فشل قراءة الملف: ' + e.message, 'err');
   }
+}
+
+/* ── Parse XLSX: header from SUPPLIER_HEADER_ROW ──────────────── */
+
+function parseXlsxBuffer(buffer) {
+  var wb = XLSX.read(buffer, { type: 'array' });
+  var sheetName = wb.SheetNames[0];
+  var ws = wb.Sheets[sheetName];
+  var aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+  var hdrIdx = SUPPLIER_HEADER_ROW - 1;   // 0-based
+  if (aoa.length <= hdrIdx) return { headers: [], rows: [] };
+
+  var rawHeaders = aoa[hdrIdx];
+  var headers = rawHeaders.map(function(h) { return String(h == null ? '' : h).trim(); })
+                          .filter(function(h) { return h !== ''; });
+
+  var rows = [];
+  for (var i = hdrIdx + 1; i < aoa.length; i++) {
+    var raw = aoa[i];
+    var obj = {};
+    var hasValue = false;
+    for (var c = 0; c < headers.length; c++) {
+      var val = String(raw[c] == null ? '' : raw[c]).trim();
+      obj[headers[c]] = val;
+      if (val) hasValue = true;
+    }
+    if (hasValue) rows.push(obj);
+  }
+
+  return { headers: headers, rows: rows };
+}
+
+/* ── Parse CSV: header from SUPPLIER_HEADER_ROW ───────────────── */
+
+function parseCsvBuffer(buffer) {
+  var decoder = new TextDecoder(supplierEncoding, { fatal: false });
+  var text = decoder.decode(buffer);
+
+  var parsed = Papa.parse(text, {
+    header: false,
+    skipEmptyLines: false,
+  });
+
+  var allRows = parsed.data || [];
+  var hdrIdx = SUPPLIER_HEADER_ROW - 1;
+  if (allRows.length <= hdrIdx) return { headers: [], rows: [] };
+
+  var headers = allRows[hdrIdx].map(function(h) { return String(h == null ? '' : h).trim(); })
+                               .filter(function(h) { return h !== ''; });
+
+  var rows = [];
+  for (var i = hdrIdx + 1; i < allRows.length; i++) {
+    var raw = allRows[i];
+    var obj = {};
+    var hasValue = false;
+    for (var c = 0; c < headers.length; c++) {
+      var val = String(raw[c] == null ? '' : raw[c]).trim();
+      obj[headers[c]] = val;
+      if (val) hasValue = true;
+    }
+    if (hasValue) rows.push(obj);
+  }
+
+  return { headers: headers, rows: rows };
 }
 
 function renderSkuColumnOptions(headers) {
