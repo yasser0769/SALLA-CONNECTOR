@@ -115,6 +115,9 @@
     const progressPercent = document.getElementById("progressPercent");
     const progressText = document.getElementById("progressText");
     const progressDetail = document.getElementById("progressDetail");
+    const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+    const CHUNK_PER_PAGE_DRY_RUN = 100;
+    const CHUNK_PER_PAGE_APPLY = 60;
 
     const ALIASES = {
       sku: [
@@ -137,8 +140,7 @@
     let jobPollTimer = null;
 
     connectBtn.addEventListener("click", () => {
-      const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-      window.location.href = isLocal ? "/auth/salla" : "/api/oauth/start";
+      window.location.href = IS_LOCAL ? "/auth/salla" : "/api/oauth/start";
     });
 
     logoutBtn.addEventListener("click", async () => {
@@ -200,49 +202,255 @@
         }
 
         addMessage("info", `تم تجهيز ${supplierItems.length} صف من ملف المورد.`);
-
-        const response = await fetch("/api/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            supplierItems,
-            zeroMissingSku: zeroMissingSkuInput.checked,
-            dryRun,
-            async: !dryRun
-          })
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.message || data.error || "فشل غير معروف من الخادم.");
-        }
-
-        setStats(data.stats);
-        renderPreview(data.previewRows || []);
-
-        if (dryRun) {
-          addMessage("success", "تم إنشاء المعاينة بنجاح.");
-          addMessage("info", `سيتم تحديث المخزون: ${data.stats.plannedQuantityUpdates} | الأسعار: ${data.stats.plannedPriceUpdates}`);
-          if (data.stats.missingSupplierInSalla > 0) {
-            addMessage("warning", `SKU بالمورد وغير موجود في سلة: ${data.stats.missingSupplierInSalla}`);
-          }
-          lastPreviewReady = true;
-          applyBtn.disabled = (data.stats.plannedQuantityUpdates + data.stats.plannedPriceUpdates) === 0;
+        if (IS_LOCAL) {
+          await runSyncLocal(dryRun, supplierItems);
           return;
         }
 
-        if (data.async && data.job_id) {
-          activeJobId = data.job_id;
-          addMessage("info", "بدأ تنفيذ التحديث. سيتم عرض التقدم المباشر الآن.");
-          updateProgressUI(data.progress || {}, "جاري التنفيذ");
-          startJobPolling(activeJobId);
-          return;
-        }
-
-        applySyncResult(data);
+        await runSyncChunked(dryRun, supplierItems);
       } catch (error) {
         addMessage("error", `تعذر إكمال العملية: ${error.message}`);
       }
+    }
+
+    async function runSyncLocal(dryRun, supplierItems) {
+      const { response, data } = await postJson("/api/sync", {
+        supplierItems,
+        zeroMissingSku: zeroMissingSkuInput.checked,
+        dryRun,
+        async: !dryRun
+      });
+
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(response, data, "فشل غير معروف من الخادم."));
+      }
+
+      setStats(data.stats || {});
+      renderPreview(data.previewRows || []);
+
+      if (dryRun) {
+        addMessage("success", "تم إنشاء المعاينة بنجاح.");
+        addMessage("info", `سيتم تحديث المخزون: ${data.stats?.plannedQuantityUpdates || 0} | الأسعار: ${data.stats?.plannedPriceUpdates || 0}`);
+        if ((data.stats?.missingSupplierInSalla || 0) > 0) {
+          addMessage("warning", `SKU بالمورد وغير موجود في سلة: ${data.stats.missingSupplierInSalla}`);
+        }
+        lastPreviewReady = true;
+        applyBtn.disabled = ((data.stats?.plannedQuantityUpdates || 0) + (data.stats?.plannedPriceUpdates || 0)) === 0;
+        return;
+      }
+
+      if (data.async && data.job_id) {
+        activeJobId = data.job_id;
+        addMessage("info", "بدأ تنفيذ التحديث. سيتم عرض التقدم المباشر الآن.");
+        updateProgressUI(data.progress || {}, "جاري التنفيذ");
+        startJobPolling(activeJobId);
+        return;
+      }
+
+      applySyncResult(data);
+    }
+
+    async function runSyncChunked(dryRun, supplierItems) {
+      const perPage = dryRun ? CHUNK_PER_PAGE_DRY_RUN : CHUNK_PER_PAGE_APPLY;
+      const totals = {
+        supplierSkus: countUniqueSupplierSkus(supplierItems),
+        sallaSkus: 0,
+        plannedQuantityUpdates: 0,
+        plannedPriceUpdates: 0,
+        quantityUpdated: 0,
+        priceUpdated: 0
+      };
+      const previewRows = [];
+      const failedQuantityUpdates = [];
+      const failedPriceUpdates = [];
+      const matchedSupplierSkus = new Set();
+
+      let page = 1;
+      let processedPages = 0;
+      let totalPages = null;
+      let guard = 0;
+
+      while (page && guard < 5000) {
+        guard += 1;
+
+        const { response, data } = await postJson("/api/sync", {
+          mode: "chunk",
+          page,
+          per_page: perPage,
+          supplierItems,
+          zeroMissingSku: zeroMissingSkuInput.checked,
+          dryRun
+        });
+
+        if (!response.ok) {
+          throw new Error(extractErrorMessage(response, data, "فشل تنفيذ دفعة التحديث."));
+        }
+
+        if (!data || data.mode !== "chunk") {
+          throw new Error("الخادم لم يرجع بيانات الدفعات المتوقعة.");
+        }
+
+        const chunkStats = data.stats_chunk || {};
+        processedPages += 1;
+
+        const chunkTotalPages = Number(data.total_pages || chunkStats.totalPages);
+        if (Number.isFinite(chunkTotalPages) && chunkTotalPages > 0) {
+          totalPages = chunkTotalPages;
+        }
+
+        totals.supplierSkus = Math.max(
+          totals.supplierSkus,
+          Number(chunkStats.supplierSkus || totals.supplierSkus || 0)
+        );
+        totals.sallaSkus += Number(data.items_in_page || chunkStats.sallaSkus || 0);
+        totals.plannedQuantityUpdates += Number(chunkStats.plannedQuantityUpdates || 0);
+        totals.plannedPriceUpdates += Number(chunkStats.plannedPriceUpdates || 0);
+        totals.quantityUpdated += Number(chunkStats.quantityUpdated || 0);
+        totals.priceUpdated += Number(chunkStats.priceUpdated || 0);
+
+        const chunkMatchedSkus = Array.isArray(data.matched_skus) ? data.matched_skus : [];
+        for (const sku of chunkMatchedSkus) {
+          const normalized = normalizeSkuKey(sku);
+          if (normalized) matchedSupplierSkus.add(normalized);
+        }
+
+        if (Array.isArray(data.previewRows) && previewRows.length < 300) {
+          previewRows.push(...data.previewRows.slice(0, 300 - previewRows.length));
+        }
+        if (Array.isArray(data.failedQuantityUpdates)) {
+          failedQuantityUpdates.push(...data.failedQuantityUpdates);
+        }
+        if (Array.isArray(data.failedPriceUpdates)) {
+          failedPriceUpdates.push(...data.failedPriceUpdates);
+        }
+
+        const pageDone = processedPages;
+        const pageRemaining = totalPages ? Math.max(0, totalPages - pageDone) : 0;
+        const pagePercent = totalPages
+          ? Math.min(100, Number(((pageDone / totalPages) * 100).toFixed(1)))
+          : 0;
+        const quantityProcessed = dryRun
+          ? totals.plannedQuantityUpdates
+          : (totals.quantityUpdated + failedQuantityUpdates.length);
+        const priceProcessed = dryRun
+          ? totals.plannedPriceUpdates
+          : (totals.priceUpdated + failedPriceUpdates.length);
+        const operationsDone = quantityProcessed + priceProcessed;
+        const operationsTotal = totals.plannedQuantityUpdates + totals.plannedPriceUpdates;
+        const operationsRemaining = Math.max(0, operationsTotal - operationsDone);
+        const operationsPercent = operationsTotal > 0
+          ? Math.min(100, Number(((operationsDone / operationsTotal) * 100).toFixed(1)))
+          : pagePercent;
+
+        updateProgressUI({
+          total: operationsTotal,
+          done: operationsDone,
+          remaining: operationsRemaining,
+          percent: operationsPercent,
+          quantity: {
+            total: totals.plannedQuantityUpdates,
+            done: dryRun ? totals.plannedQuantityUpdates : totals.quantityUpdated,
+            failed: dryRun ? 0 : failedQuantityUpdates.length
+          },
+          price: {
+            total: totals.plannedPriceUpdates,
+            done: dryRun ? totals.plannedPriceUpdates : totals.priceUpdated,
+            failed: dryRun ? 0 : failedPriceUpdates.length
+          },
+          detail: `دفعة ${pageDone}${totalPages ? ` من ${totalPages}` : ""} | المتبقي ${pageRemaining} دفعة`
+        }, dryRun ? "جاري بناء المعاينة على دفعات..." : "جاري تنفيذ التحديث على دفعات...");
+
+        page = getNextChunkPage(data, totalPages);
+      }
+
+      if (guard >= 5000) {
+        throw new Error("تم إيقاف العملية بسبب تجاوز حد الدفعات الآمن.");
+      }
+      if (processedPages === 0) {
+        throw new Error("لم يتم استرجاع أي دفعة من سلة.");
+      }
+
+      const plannedTotal = totals.plannedQuantityUpdates + totals.plannedPriceUpdates;
+      const matchedUniqueCount = matchedSupplierSkus.size;
+      const missingSupplierInSalla = Math.max(0, totals.supplierSkus - matchedUniqueCount);
+
+      const finalStats = {
+        supplierSkus: totals.supplierSkus,
+        sallaSkus: totals.sallaSkus,
+        plannedQuantityUpdates: totals.plannedQuantityUpdates,
+        plannedPriceUpdates: totals.plannedPriceUpdates,
+        quantityUpdated: totals.quantityUpdated,
+        priceUpdated: totals.priceUpdated,
+        missingSupplierInSalla,
+        done: dryRun ? plannedTotal : (totals.quantityUpdated + totals.priceUpdated),
+        remaining: 0
+      };
+      const finalQuantityProcessed = dryRun
+        ? totals.plannedQuantityUpdates
+        : (totals.quantityUpdated + failedQuantityUpdates.length);
+      const finalPriceProcessed = dryRun
+        ? totals.plannedPriceUpdates
+        : (totals.priceUpdated + failedPriceUpdates.length);
+      const finalDone = finalQuantityProcessed + finalPriceProcessed;
+
+      updateProgressUI({
+        total: Math.max(1, plannedTotal),
+        done: Math.max(0, finalDone),
+        remaining: 0,
+        percent: 100,
+        quantity: {
+          total: totals.plannedQuantityUpdates,
+          done: dryRun ? totals.plannedQuantityUpdates : totals.quantityUpdated,
+          failed: dryRun ? 0 : failedQuantityUpdates.length
+        },
+        price: {
+          total: totals.plannedPriceUpdates,
+          done: dryRun ? totals.plannedPriceUpdates : totals.priceUpdated,
+          failed: dryRun ? 0 : failedPriceUpdates.length
+        },
+        detail: `اكتمل التنفيذ | دفعات ${processedPages}`
+      }, "اكتمل التنفيذ");
+
+      setStats(finalStats);
+      renderPreview(previewRows);
+
+      if (dryRun) {
+        addMessage("success", "تم إنشاء المعاينة بنجاح.");
+        addMessage("info", `سيتم تحديث المخزون: ${totals.plannedQuantityUpdates} | الأسعار: ${totals.plannedPriceUpdates}`);
+        if (missingSupplierInSalla > 0) {
+          addMessage("warning", `SKU بالمورد وغير موجود في سلة: ${missingSupplierInSalla}`);
+        }
+        lastPreviewReady = true;
+        applyBtn.disabled = plannedTotal === 0;
+        return;
+      }
+
+      addMessage("success", "تم تنفيذ التحديث على سلة.");
+      addMessage("info", `نجح تحديث المخزون: ${totals.quantityUpdated} | نجح تحديث السعر: ${totals.priceUpdated}`);
+
+      if (failedQuantityUpdates.length > 0) {
+        addMessage("warning", `فشل ${failedQuantityUpdates.length} صف في تحديث المخزون. راجع السجل.`);
+        console.table(failedQuantityUpdates);
+      }
+      if (failedPriceUpdates.length > 0) {
+        addMessage("warning", `فشل ${failedPriceUpdates.length} SKU في تحديث السعر. راجع السجل.`);
+        console.table(failedPriceUpdates);
+      }
+
+      applyBtn.disabled = false;
+    }
+
+    function getNextChunkPage(data, totalPages) {
+      const currentPage = Number(data && data.page);
+      const nextPage = Number(data && data.next_page);
+
+      if (Number.isFinite(nextPage) && Number.isFinite(currentPage) && nextPage > currentPage) {
+        return nextPage;
+      }
+      if (Number.isFinite(totalPages) && Number.isFinite(currentPage) && currentPage < totalPages) {
+        return currentPage + 1;
+      }
+      return null;
     }
 
     function startJobPolling(jobId) {
@@ -265,10 +473,10 @@
       if (!jobId) return;
 
       const response = await fetch(`/api/sync/progress?job_id=${encodeURIComponent(jobId)}`);
-      const data = await response.json();
+      const data = await readApiResponse(response);
       if (!response.ok) {
         stopJobPolling();
-        addMessage("error", data.message || "تعذر قراءة تقدم المهمة.");
+        addMessage("error", extractErrorMessage(response, data, "تعذر قراءة تقدم المهمة."));
         return;
       }
 
@@ -341,7 +549,7 @@
       progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
       progressPercent.textContent = `${Math.max(0, Math.min(100, percent))}%`;
       progressText.textContent = title || "جاري التنفيذ";
-      progressDetail.textContent = `تم ${done} من ${total} | المتبقي ${remaining} | مخزون ${qtyDone}/${qtyTotal} | سعر ${priceDone}/${priceTotal}`;
+      progressDetail.textContent = progress?.detail || `تم ${done} من ${total} | المتبقي ${remaining} | مخزون ${qtyDone}/${qtyTotal} | سعر ${priceDone}/${priceTotal}`;
 
       document.getElementById("statDone").textContent = done;
       document.getElementById("statRemaining").textContent = remaining;
@@ -377,8 +585,9 @@
     async function getStatus() {
       try {
         const response = await fetch("/api/status");
+        const data = await readApiResponse(response);
         if (!response.ok) return { connected: false };
-        return response.json();
+        return data && typeof data === "object" ? data : { connected: false };
       } catch {
         return { connected: false };
       }
@@ -643,6 +852,57 @@
       previewTable.innerHTML = "";
       setStats({});
       resetProgressUI();
+    }
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      const data = await readApiResponse(response);
+      return { response, data };
+    }
+
+    async function readApiResponse(response) {
+      const raw = await response.text();
+      if (!raw) return {};
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return {
+          error: "non_json_response",
+          message: raw.replace(/\s+/g, " ").trim().slice(0, 400)
+        };
+      }
+    }
+
+    function extractErrorMessage(response, data, fallback) {
+      const fromBody = cleanText(
+        data?.message ||
+        data?.error_description ||
+        data?.error ||
+        ""
+      );
+      if (fromBody) return fromBody;
+
+      if (response?.status) {
+        return `${fallback || "فشل الطلب"} (HTTP ${response.status})`;
+      }
+      return fallback || "حدث خطأ غير متوقع.";
+    }
+
+    function countUniqueSupplierSkus(items) {
+      const set = new Set();
+      for (const item of items || []) {
+        const sku = normalizeSkuKey(item?.sku);
+        if (sku) set.add(sku);
+      }
+      return set.size;
+    }
+
+    function normalizeSkuKey(v) {
+      return cleanText(v).toLowerCase().replace(/\s+/g, "");
     }
 
     function addMessage(type, text) {

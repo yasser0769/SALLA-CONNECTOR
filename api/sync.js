@@ -46,6 +46,10 @@ module.exports = async function handler(req, res) {
   const supplierItems = Array.isArray(body && body.supplierItems) ? body.supplierItems : [];
   const zeroMissingSku = Boolean(body && body.zeroMissingSku);
   const dryRun = body && body.dryRun !== false;
+  const mode = body && body.mode === 'chunk' ? 'chunk' : 'full';
+  const requestedPage = Number(body && body.page) > 0 ? Number(body.page) : 1;
+  const requestedPerPage = Number(body && body.per_page) > 0 ? Number(body.per_page) : 100;
+  const perPage = Math.min(Math.max(requestedPerPage, 1), 100);
 
   if (!supplierItems.length) {
     return sendJson(res, 400, { error: 'supplierItems فارغ.', debug_id: id });
@@ -104,6 +108,51 @@ module.exports = async function handler(req, res) {
 
   try {
     const supplierMap = buildSupplierMap(supplierItems);
+
+    if (mode === 'chunk') {
+      const pageResult = await fetchQuantitiesPage(apiFetch, requestedPage, perPage, id);
+      const plan = buildSyncPlan({
+        supplierMap,
+        sallaRows: pageResult.rows,
+        zeroMissingSku,
+        computeMissingSupplierInSalla: false,
+      });
+      const matchedSkus = collectMatchedSkus(pageResult.rows, supplierMap);
+
+      const payload = {
+        mode: 'chunk',
+        dryRun,
+        page: pageResult.page,
+        per_page: perPage,
+        next_page: pageResult.nextPage,
+        total_pages: pageResult.totalPages,
+        items_in_page: pageResult.rows.length,
+        stats_chunk: {
+          ...plan.stats,
+          sallaSkus: pageResult.rows.length,
+          page: pageResult.page,
+          nextPage: pageResult.nextPage,
+          totalPages: pageResult.totalPages,
+        },
+        matched_skus: matchedSkus,
+        previewRows: plan.previewRows.slice(0, 120),
+        failedPriceUpdates: [],
+        failedQuantityUpdates: [],
+      };
+
+      if (!dryRun) {
+        const defaultReasonId = await resolveQuantityReasonId(apiFetch);
+        const quantityResult = await applyQuantityUpdates(apiFetch, plan.quantityUpdates, defaultReasonId);
+        const priceResult = await applyPriceUpdates(apiFetch, plan.priceUpdates);
+        payload.failedPriceUpdates = priceResult.failed;
+        payload.failedQuantityUpdates = quantityResult.failed;
+        payload.stats_chunk.quantityUpdated = quantityResult.success;
+        payload.stats_chunk.priceUpdated = priceResult.success;
+      }
+
+      return sendJson(res, 200, payload);
+    }
+
     const sallaRows = await fetchAllProductQuantities(apiFetch, id);
     const plan = buildSyncPlan({ supplierMap, sallaRows, zeroMissingSku });
 
@@ -135,6 +184,25 @@ module.exports = async function handler(req, res) {
     return sendJson(res, 500, { error: error.message, debug_id: id });
   }
 };
+
+async function fetchQuantitiesPage(apiFetch, page, perPage, debugIdValue) {
+  const upstream = await apiFetch(`/products/quantities?page=${page}&per_page=${perPage}`);
+  if (upstream.status >= 400) {
+    throw new Error(`Failed fetching quantities page=${page}: ${JSON.stringify(upstream.body || {}).slice(0, 300)}`);
+  }
+
+  const rows = extractDataArray(upstream.body);
+  const pagination = extractPagination(upstream.body, page);
+  const nextPage = deriveNextPage(pagination, page, rows.length, perPage);
+
+  console.log(`[sync:${debugIdValue}] chunk page=${page} rows=${rows.length} next=${nextPage || 'none'}`);
+  return {
+    page,
+    rows,
+    nextPage,
+    totalPages: Number.isFinite(pagination.totalPages) ? pagination.totalPages : null,
+  };
+}
 
 async function readJsonBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
@@ -217,7 +285,12 @@ function buildSupplierMap(items) {
   return map;
 }
 
-function buildSyncPlan({ supplierMap, sallaRows, zeroMissingSku }) {
+function buildSyncPlan({
+  supplierMap,
+  sallaRows,
+  zeroMissingSku,
+  computeMissingSupplierInSalla = true,
+}) {
   const quantityUpdates = [];
   const priceUpdates = [];
   const previewRows = [];
@@ -296,13 +369,15 @@ function buildSyncPlan({ supplierMap, sallaRows, zeroMissingSku }) {
   }
 
   const missingSupplierInSalla = [];
-  for (const [sku, entry] of supplierMap.entries()) {
-    if (seenSallaSkus.has(sku)) continue;
-    missingSupplierInSalla.push({
-      sku: entry.sku,
-      supplier_price: entry.price ?? '',
-      supplier_stock: entry.stock ?? '',
-    });
+  if (computeMissingSupplierInSalla) {
+    for (const [sku, entry] of supplierMap.entries()) {
+      if (seenSallaSkus.has(sku)) continue;
+      missingSupplierInSalla.push({
+        sku: entry.sku,
+        supplier_price: entry.price ?? '',
+        supplier_stock: entry.stock ?? '',
+      });
+    }
   }
 
   return {
@@ -322,6 +397,18 @@ function buildSyncPlan({ supplierMap, sallaRows, zeroMissingSku }) {
       missingSupplierInSalla: missingSupplierInSalla.length,
     },
   };
+}
+
+function collectMatchedSkus(rows, supplierMap) {
+  const out = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const sku = normalizeSku(row && row.sku);
+    if (!sku || !supplierMap.has(sku) || seen.has(sku)) continue;
+    seen.add(sku);
+    out.push(sku);
+  }
+  return out;
 }
 
 async function resolveQuantityReasonId(apiFetch) {
@@ -416,31 +503,36 @@ async function fetchAllProductQuantities(apiFetch, debugIdValue) {
     const pagination = extractPagination(upstream.body, page);
     console.log(`[sync:${debugIdValue}] quantities page=${page} chunk=${chunk.length} added=${added}`);
 
-    if (Number.isFinite(pagination.nextPage) && pagination.nextPage > page) {
-      page = pagination.nextPage;
-      continue;
-    }
-    if (pagination.hasNext === true) {
-      page += 1;
-      continue;
-    }
-    if (
-      Number.isFinite(pagination.totalPages) &&
-      Number.isFinite(pagination.currentPage) &&
-      pagination.currentPage < pagination.totalPages
-    ) {
-      page = pagination.currentPage + 1;
+    const nextPage = deriveNextPage(pagination, page, chunk.length, perPage);
+    if (nextPage) {
+      page = nextPage;
       continue;
     }
     if (chunk.length === 0 || added === 0) break;
-    if (!pagination.isExplicit) {
-      page += 1;
-      continue;
-    }
     break;
   }
 
   return rows;
+}
+
+function deriveNextPage(pagination, page, chunkLength, perPage) {
+  if (Number.isFinite(pagination.nextPage) && pagination.nextPage > page) {
+    return pagination.nextPage;
+  }
+  if (pagination.hasNext === true) {
+    return page + 1;
+  }
+  if (
+    Number.isFinite(pagination.totalPages) &&
+    Number.isFinite(pagination.currentPage) &&
+    pagination.currentPage < pagination.totalPages
+  ) {
+    return pagination.currentPage + 1;
+  }
+  if (!pagination.isExplicit && chunkLength >= perPage) {
+    return page + 1;
+  }
+  return null;
 }
 
 function extractDataArray(payload) {
