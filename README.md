@@ -34,6 +34,11 @@ Credentials are read from `.env`:
 - `المتبقي` (remaining count)
 - Progress bar + percent until completion
 
+## Vercel mode
+
+- On Vercel deployments, sync runs automatically in small chunked batches.
+- This reduces timeout risk on the free plan and keeps progress visible batch-by-batch.
+
 ## Sync rules
 
 - Match supplier `items` with Salla `SKU`.
