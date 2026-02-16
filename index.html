@@ -1,1302 +1,709 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>أداة سلة — ربط وتحديث المخزون والأسعار</title>
-<link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@200;300;400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<style>
-:root{--bg:#07060d;--surface:#100f17;--surface2:#1a1826;--surface3:#242232;--border:#2a2740;--border2:#3a3655;--text:#ece8f4;--text2:#8b85a0;--text3:#5e5872;--accent:#a78bfa;--accent-dim:rgba(167,139,250,0.1);--green:#34d399;--green-dim:rgba(52,211,153,0.1);--red:#f87171;--red-dim:rgba(248,113,113,0.1);--amber:#fbbf24;--amber-dim:rgba(251,191,36,0.1);--blue:#60a5fa;--blue-dim:rgba(96,165,250,0.1);--radius:12px}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Readex Pro',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.6}
-.grain{position:fixed;inset:0;pointer-events:none;opacity:0.02;z-index:9999;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
-.glow{position:fixed;top:-180px;left:50%;transform:translateX(-50%);width:700px;height:450px;background:radial-gradient(ellipse,rgba(167,139,250,0.07),transparent 70%);pointer-events:none;z-index:0}
-.app{max-width:900px;margin:0 auto;padding:40px 20px 80px;position:relative;z-index:1}
-.hdr{text-align:center;margin-bottom:40px}
-.hdr .badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:0.7rem;font-weight:500;background:var(--accent-dim);color:var(--accent);margin-bottom:14px}
-.hdr h1{font-size:1.6rem;font-weight:700;margin-bottom:6px}
-.hdr p{color:var(--text2);font-size:0.84rem;font-weight:300}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:20px}
-.card h2{font-size:1rem;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
-.card h2 .num{width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700}
-.ff{margin-bottom:14px}
-.ff label{display:block;font-size:0.75rem;color:var(--text2);margin-bottom:4px}
-.ff input{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.82rem;outline:none;direction:ltr;text-align:left}
-.ff input:focus{border-color:var(--accent)}
-.ff .hint{font-size:0.68rem;color:var(--text3);margin-top:3px}
-.btn{padding:12px 24px;border:none;border-radius:10px;font-family:inherit;font-size:0.88rem;font-weight:600;cursor:pointer;transition:all 0.2s;display:inline-flex;align-items:center;gap:6px}
-.btn:hover{transform:translateY(-1px);opacity:0.9}
-.btn-accent{background:var(--accent);color:#fff}
-.btn-green{background:var(--green);color:#111}
-.btn-red{background:var(--red);color:#fff}
-.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
-.btn-outline:hover{border-color:var(--accent)}
-.btn:disabled{opacity:0.3;cursor:not-allowed;transform:none}
-.status{padding:12px 16px;border-radius:10px;font-size:0.78rem;margin-top:12px;display:none;direction:ltr;text-align:left}
-.status.ok{display:block;background:var(--green-dim);color:var(--green);border:1px solid rgba(52,211,153,0.2)}
-.status.err{display:block;background:var(--red-dim);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
-.status.info{display:block;background:var(--blue-dim);color:var(--blue);border:1px solid rgba(96,165,250,0.2)}
-.status.warn{display:block;background:var(--amber-dim);color:var(--amber);border:1px solid rgba(251,191,36,0.2)}
-.token-box{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:monospace;font-size:0.72rem;color:var(--accent);word-break:break-all;margin-top:10px;direction:ltr;text-align:left}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.hidden{display:none!important}
-.log{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:0.72rem;color:var(--text2);max-height:200px;overflow-y:auto;font-family:monospace;line-height:1.8;direction:ltr;text-align:left;margin-top:12px;white-space:pre-wrap;word-break:break-all}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:16px 0}
-.st{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center}
-.st .n{font-size:1.3rem;font-weight:700;margin-bottom:2px}
-.st .l{font-size:0.66rem;color:var(--text2)}
-.prog{height:4px;background:var(--surface2);border-radius:4px;margin:12px 0;overflow:hidden}
-.prog .bar{height:100%;background:var(--accent);transition:width 0.3s;width:0;border-radius:4px}
-.sup-upload{background:var(--surface2);border:1.5px dashed var(--border);border-radius:10px;padding:20px;text-align:center;cursor:pointer;transition:all 0.2s}
-.sup-upload:hover{border-color:var(--accent);background:var(--surface3)}
-.sup-upload input{display:none}
-.sup-upload.ok{border-color:var(--green);border-style:solid}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>مزامنة سلة عبر API</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: "Tajawal", "Segoe UI", Tahoma, sans-serif; }
+  </style>
 </head>
-<body>
-<div class="grain"></div>
-<div class="glow"></div>
-<div class="app">
-  <div class="hdr">
-    <div class="badge">SALLA CONNECTOR v1</div>
-    <h1>ربط وتحديث مخزون سلة</h1>
-    <p>ربط مباشر مع API سلة — سحب المنتجات وتحديث الأسعار والكميات</p>
-    <div id="bootStatus" class="badge" style="background:var(--blue-dim);color:var(--blue)">Booting...</div>
-  </div>
-
-  <!-- STEP 1: Auth -->
-  <div class="card" id="step1">
-    <h2><span class="num">1</span> ربط المتجر</h2>
-    <div id="authForm">
-      <div class="hint" style="margin-bottom:12px">
-        🔐 الربط يتم عبر OAuth الرسمي. لا تدخل Client Secret في الواجهة، يتم قراءته من Vercel Environment Variables.
-      </div>
-      <div class="row">
-        <button class="btn btn-accent" onclick="startAuth()">🔗 Connect with Salla</button>
-        <button class="btn btn-outline" onclick="testApi()" style="font-size:0.76rem">🔧 Ping API</button>
-        <button class="btn btn-outline" onclick="testToken()" style="font-size:0.76rem">🧪 Test Token</button>
-      </div>
-    </div>
-    <div id="authStatus" class="status"></div>
-    <div id="runtimeStatus" class="status"></div>
-    <div id="tokenDisplay" class="hidden">
-      <div class="token-box" id="tokenText"></div>
-      <div class="hint" id="tokenTypeInfo" style="margin-top:6px"></div>
-      <div class="row" style="margin-top:8px">
-        <button class="btn btn-outline" onclick="copyToken()" style="font-size:0.74rem;padding:6px 12px">📋 نسخ</button>
-        <button class="btn btn-outline" onclick="doRefreshToken()" style="font-size:0.74rem;padding:6px 12px">🔄 تجديد</button>
-        <button class="btn btn-red" style="font-size:0.74rem;padding:6px 12px" onclick="logout()">🚪 قطع</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- STEP 2: Pull products -->
-  <div class="card hidden" id="step2">
-    <h2><span class="num">2</span> سحب المنتجات من المتجر</h2>
-    <p style="font-size:0.8rem;color:var(--text2);margin-bottom:14px">سحب جميع المنتجات مع الأسعار والكميات والخيارات مباشرة من API سلة</p>
-    <div class="row" style="gap:8px;margin-bottom:10px">
-      <input id="maxPagesInput" type="number" min="1" placeholder="maxPages (اختياري)" style="max-width:190px">
-      <input id="maxItemsInput" type="number" min="1" placeholder="maxItems (اختياري)" style="max-width:190px">
-    </div>
-    <button class="btn btn-accent" id="pullBtn" onclick="pullProducts()">📦 Fetch Products</button>
-    <div class="prog hidden" id="pullProg"><div class="bar" id="pullBar"></div></div>
-    <div class="log hidden" id="pullLog"></div>
-    <div class="stats hidden" id="pullStats">
-      <div class="st"><div class="n" id="ps1" style="color:var(--accent)">0</div><div class="l">إجمالي المنتجات</div></div>
-      <div class="st"><div class="n" id="ps2" style="color:var(--blue)">0</div><div class="l">بـ SKU</div></div>
-      <div class="st"><div class="n" id="ps3" style="color:var(--amber)">0</div><div class="l">بخيارات</div></div>
-      <div class="st"><div class="n" id="ps4" style="color:var(--green)">0</div><div class="l">إجمالي SKUs</div></div>
-    </div>
-  </div>
-
-  <!-- STEP 3: Supplier file -->
-  <div class="card hidden" id="step3">
-    <h2><span class="num">3</span> رفع ملف المورد ومطابقة SKU</h2>
-    <p style="font-size:0.8rem;color:var(--text2);margin-bottom:12px">ارفع ملف المورد (XLSX أو CSV)، اختر عمود SKU، ثم راجع معاينة المطابقة المجمّعة (منتج + خياراته).</p>
-
-    <div class="ff">
-      <label>ملف المورد (XLSX أو CSV)</label>
-      <input id="supplierCsvInput" type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="loadSupplierFile(event)">
-      <div class="hint">يدعم XLSX مباشرة. للـ CSV يدعم UTF-8 وWindows-1256. الهيدر يُقرأ من الصف 7.</div>
-    </div>
-
-    <div class="row" style="gap:8px;margin-bottom:10px">
-      <button class="btn btn-outline" onclick="setSupplierEncoding('utf-8')">UTF-8</button>
-      <button class="btn btn-outline" onclick="setSupplierEncoding('windows-1256')">Windows-1256</button>
-      <span id="encodingInfo" style="font-size:0.75rem;color:var(--text2)">الترميز الحالي: UTF-8</span>
-    </div>
-
-    <div id="supInfo" class="status"></div>
-
-    <!-- Column selection (appears after CSV header is read) -->
-    <div id="columnSelectionArea" class="hidden" style="margin-top:14px">
-      <div class="ff">
-        <label>اختر عمود المطابقة (SKU)</label>
-        <select id="skuColumnSelect" style="width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.82rem;outline:none"></select>
-      </div>
-      <div class="row" style="gap:8px;margin-top:8px">
-        <div style="flex:1">
-          <span style="font-size:0.7rem;color:var(--text3)">عمود التكلفة (Cost)</span>
-          <select id="costColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
+<body class="min-h-screen bg-gradient-to-b from-slate-100 via-white to-slate-100 text-slate-800">
+  <main class="max-w-7xl mx-auto p-4 md:p-8">
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 md:p-7">
+      <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-6">
+        <div>
+          <h1 class="text-2xl md:text-3xl font-bold">مزامنة سلة API</h1>
+          <p class="text-sm text-slate-500 mt-1">تحديث السعر والمخزون من ملف المورد مباشرة إلى سلة مع تصفير SKU غير الموجود.</p>
         </div>
-        <div style="flex:1">
-          <span style="font-size:0.7rem;color:var(--text3)">عمود سعر البيع (Retail Price)</span>
-          <select id="retailPriceColumnSelect" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:0.78rem;outline:none"></select>
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="connectBtn" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">ربط سلة</button>
+          <button id="logoutBtn" class="px-4 py-2.5 rounded-xl bg-slate-600 hover:bg-slate-700 text-white font-semibold">فصل</button>
         </div>
       </div>
-      <div class="row" style="margin-top:10px;gap:8px">
-        <button class="btn btn-accent" id="useSkuColBtn" onclick="useSkuColumn()" disabled>✅ استخدام الأعمدة</button>
+
+      <div class="mb-6 border border-slate-200 rounded-xl p-4 bg-slate-50">
+        <p class="text-sm">حالة الربط: <span id="connectionStatus" class="font-semibold text-rose-700">غير متصل</span></p>
       </div>
-    </div>
 
-    <div class="ff" style="margin-top:10px">
-      <label>معاينة أول 5 صفوف</label>
-      <pre id="csvPreview" class="log hidden" style="max-height:180px"></pre>
-    </div>
-
-    <!-- Export counters (appears after column selection) -->
-    <div class="stats hidden" id="exportStats">
-      <div class="st"><div class="n" id="es1" style="color:var(--accent)">0</div><div class="l">إجمالي SKUs سلة</div></div>
-      <div class="st"><div class="n" id="es2" style="color:var(--green)">0</div><div class="l">مطابق</div></div>
-      <div class="st"><div class="n" id="es3" style="color:var(--red)">0</div><div class="l">غير مطابق</div></div>
-      <div class="st"><div class="n" id="es4" style="color:var(--blue)">0</div><div class="l">صفوف أسعار للتصدير</div></div>
-      <div class="st"><div class="n" id="es5" style="color:var(--amber)">0</div><div class="l">صفوف كميات للتصدير</div></div>
-    </div>
-
-    <!-- Download Salla-import XLSX buttons -->
-    <div class="row hidden" id="exportBtnsRow" style="margin-top:10px;gap:8px">
-      <button class="btn btn-green" id="dlPriceBtn" disabled onclick="downloadPriceXlsx()">📥 تحميل XLSX الأسعار</button>
-      <button class="btn btn-green" id="dlQtyBtn" disabled onclick="downloadQuantityXlsx()">📥 تحميل XLSX الكميات</button>
-    </div>
-
-    <div class="row" style="margin-top:14px;gap:8px">
-      <button class="btn btn-accent" id="compareBtn" disabled onclick="compareAndUpdate()">⚡ إنشاء معاينة مطابقة مجمّعة</button>
-      <button class="btn btn-green" id="exportBtn" disabled onclick="exportMatchedXlsx()">📥 تصدير XLSX</button>
-    </div>
-
-    <div class="stats hidden" id="cmpStats">
-      <div class="st"><div class="n" id="cs1" style="color:var(--green)">0</div><div class="l">مطابق</div></div>
-      <div class="st"><div class="n" id="cs2" style="color:var(--red)">0</div><div class="l">غير مطابق</div></div>
-      <div class="st"><div class="n" id="cs3" style="color:var(--accent)">0</div><div class="l">إجمالي SKUs</div></div>
-      <div class="st"><div class="n" id="cs4" style="color:var(--amber)">0</div><div class="l">مفاتيح مورد فريدة</div></div>
-    </div>
-
-    <div class="log hidden" id="cmpLog"></div>
-  </div>
-</div>
-
-<script>
-let storeProducts = [];
-let supplierRows = [];
-let supplierHeaders = [];
-let supplierEncoding = "utf-8";
-let selectedSkuColumn = "";
-let supplierMap = new Map();
-let supplierSkuSet = new Set();
-let lastMatchResult = null;
-let lastExportResult = null;
-
-const API_BASE = '/api';
-
-const APP_VERSION = '2026-02-12-v2';
-
-function setBootStatus(msg, type = 'info') {
-  const el = document.getElementById('bootStatus');
-  if (!el) return;
-  const color = type === 'ok' ? 'var(--green)' : (type === 'err' ? 'var(--red)' : 'var(--blue)');
-  const bg = type === 'ok' ? 'var(--green-dim)' : (type === 'err' ? 'var(--red-dim)' : 'var(--blue-dim)');
-  el.style.color = color;
-  el.style.background = bg;
-  el.textContent = msg;
-}
-
-function showRuntimeError(message) {
-  const el = document.getElementById('runtimeStatus');
-  if (!el) return;
-  el.className = 'status err';
-  el.innerHTML = '⚠️ Runtime Error:<br><pre>' + String(message).slice(0, 1200) + '</pre>';
-}
-
-window.onerror = function(message, source, lineno, colno) {
-  showRuntimeError(message + ' @ ' + source + ':' + lineno + ':' + colno);
-};
-
-window.addEventListener('unhandledrejection', function(ev) {
-  const reason = ev && ev.reason ? (ev.reason.stack || ev.reason.message || String(ev.reason)) : 'unknown rejection';
-  showRuntimeError(reason);
-});
-
-window.addEventListener('load', () => {
-  setBootStatus('App loaded ✓ v' + APP_VERSION, 'ok');
-  const params = new URLSearchParams(window.location.search);
-  const oauth = params.get('oauth');
-  const reason = params.get('reason');
-  const detail = params.get('detail');
-
-  if (oauth === 'success') {
-    showStatus('authStatus', '✅ تم الربط بنجاح. يمكنك الآن اختبار التوكن وسحب المنتجات.', 'ok');
-  } else if (oauth === 'error') {
-    const msg = detail ? decodeURIComponent(detail) : (reason || 'OAuth failed');
-    showStatus('authStatus', '❌ OAuth error: ' + msg, 'err');
-  }
-
-  if (oauth) {
-    window.history.replaceState({}, '', window.location.pathname);
-  }
-});
-
-function showStatus(id, msg, type) {
-  const el = document.getElementById(id);
-  el.className = 'status ' + type;
-  el.innerHTML = msg;
-}
-
-function pretty(obj) {
-  try { return JSON.stringify(obj, null, 2); }
-  catch { return String(obj); }
-}
-
-async function parseJsonResponse(resp) {
-  const text = await resp.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error('API returned non-JSON: ' + text.slice(0, 300));
-  }
-  return { data, status: resp.status, ok: resp.ok };
-}
-
-function startAuth() {
-  window.location.href = API_BASE + '/oauth/start';
-}
-
-async function testApi() {
-  showStatus('authStatus', '⏳ فحص Ping...', 'info');
-  try {
-    const resp = await fetch(API_BASE + '/salla?action=ping', { cache: 'no-store' });
-    const { data, ok, status } = await parseJsonResponse(resp);
-    if (!ok) {
-      showStatus('authStatus', '❌ Ping failed: HTTP ' + status + '<br><pre>' + pretty(data) + '</pre>', 'err');
-      return;
-    }
-    showStatus('authStatus', '✅ Ping OK<br><pre>' + pretty(data) + '</pre>', 'ok');
-  } catch (e) {
-    showStatus('authStatus', '❌ ' + e.message, 'err');
-  }
-}
-
-async function testToken() {
-  showStatus('authStatus', '⏳ اختبار صلاحية Access Token...', 'info');
-  try {
-    const resp = await fetch(API_BASE + '/salla/test-token', { cache: 'no-store' });
-    const { data, ok, status } = await parseJsonResponse(resp);
-    if (!ok) {
-      showStatus('authStatus', '❌ Test Token failed (HTTP ' + status + ')<br><pre>' + pretty(data) + '</pre>', 'err');
-      return;
-    }
-
-    const body = data.body || {};
-    const debug = data.debug_id ? (' (debug_id: ' + data.debug_id + ')') : '';
-    showStatus('authStatus', '✅ Token accepted by Merchant API' + debug + '<br><pre>' + pretty(body) + '</pre>', 'ok');
-    document.getElementById('step2').classList.remove('hidden');
-  } catch (e) {
-    showStatus('authStatus', '❌ ' + e.message, 'err');
-  }
-}
-
-async function logout() {
-  await fetch(API_BASE + '/salla/logout');
-  document.getElementById('step2').classList.add('hidden');
-  document.getElementById('step3').classList.add('hidden');
-  showStatus('authStatus', 'تم تسجيل الخروج من الجلسة.', 'warn');
-}
-
-function copyToken() {
-  showStatus('authStatus', 'ℹ️ التوكن محفوظ داخل HttpOnly Cookie (لا يمكن نسخه من المتصفح للأمان).', 'info');
-}
-
-async function doRefreshToken() {
-  showStatus('authStatus', 'ℹ️ يتم التجديد تلقائياً عند 401. استخدم Test Token أو Fetch Products.', 'info');
-}
-
-function extractItems(payload) {
-  if (!payload) return [];
-  if (Array.isArray(payload.data)) return payload.data;
-  if (payload.data && Array.isArray(payload.data.data)) return payload.data.data;
-  if (Array.isArray(payload.items)) return payload.items;
-  return [];
-}
-
-function extractPagination(payload) {
-  if (!payload) return null;
-  return payload.pagination || payload.meta || payload.links || null;
-}
-
-function extractTotalPages(payload) {
-  const p = extractPagination(payload);
-  if (!p || typeof p !== 'object') return null;
-  const candidates = [p.total_pages, p.totalPages, p.last_page, p.lastPage, p.pages];
-  for (const c of candidates) {
-    const n = Number(c);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  return null;
-}
-
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function fetchProductsPageWithRetry(page, perPage, retries = 2) {
-  let attempt = 0;
-  while (true) {
-    const resp = await fetch(API_BASE + '/salla?action=products_page&page=' + page + '&per_page=' + perPage, { cache: 'no-store' });
-    const parsed = await parseJsonResponse(resp);
-    if (parsed.ok) return parsed;
-
-    const retryable = parsed.status === 429 || (parsed.status >= 500 && parsed.status <= 599);
-    if (!retryable || attempt >= retries) return parsed;
-
-    attempt += 1;
-    await delay(300 * attempt);
-  }
-}
-
-async function pullProducts() {
-  const log = document.getElementById('pullLog');
-  const prog = document.getElementById('pullProg');
-  const bar = document.getElementById('pullBar');
-  log.classList.remove('hidden'); log.textContent = '';
-  prog.classList.remove('hidden'); bar.style.width = '5%';
-  document.getElementById('pullBtn').disabled = true;
-
-  function plog(m) { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; }
-
-  const perPage = 100;
-  const maxPagesInput = Number(document.getElementById('maxPagesInput').value || 0);
-  const maxItemsInput = Number(document.getElementById('maxItemsInput').value || 0);
-  const userMaxPages = Number.isFinite(maxPagesInput) && maxPagesInput > 0 ? maxPagesInput : null;
-  const userMaxItems = Number.isFinite(maxItemsInput) && maxItemsInput > 0 ? maxItemsInput : null;
-
-  try {
-    storeProducts = [];
-    let page = 1;
-    let totalPages = null;
-
-    while (true) {
-      const uiTotal = totalPages || userMaxPages || '?';
-      plog('📄 Fetching page ' + page + ' / ' + uiTotal);
-
-      const { data, status, ok } = await fetchProductsPageWithRetry(page, perPage, 2);
-
-      if (!ok) {
-        const debug = data && data.debug_id ? (' (debug_id: ' + data.debug_id + ')') : '';
-        plog('❌ Upstream error HTTP ' + status + debug);
-        plog(pretty(data));
-        showStatus('authStatus', '❌ فشل جلب المنتجات (HTTP ' + status + ')' + debug + '<br><pre>' + pretty(data) + '</pre>', 'err');
-        break;
-      }
-
-      const body = data.body || data;
-      const pageItems = extractItems(body);
-      const paginationObj = extractPagination(body);
-      if (page === 1) {
-        plog('🧭 Pagination(first page): ' + JSON.stringify(paginationObj || {}, null, 2));
-      }
-
-      storeProducts.push(...pageItems);
-      plog('✅ Fetched ' + pageItems.length + ' items this page | total so far: ' + storeProducts.length);
-
-      if (!totalPages) totalPages = extractTotalPages(body);
-
-      if (userMaxItems && storeProducts.length >= userMaxItems) {
-        storeProducts = storeProducts.slice(0, userMaxItems);
-        plog('⛔ stop by maxItems=' + userMaxItems);
-        break;
-      }
-
-      const reachedTotalPages = totalPages ? page >= totalPages : false;
-      const reachedUserMaxPages = userMaxPages ? page >= userMaxPages : false;
-      const noMetaStop = !totalPages && pageItems.length < perPage;
-      const progressBase = totalPages || userMaxPages || Math.max(page + 1, 2);
-      bar.style.width = Math.min(98, Math.round((page / progressBase) * 100)) + '%';
-
-      if (reachedTotalPages || reachedUserMaxPages || noMetaStop || pageItems.length === 0) break;
-
-      page += 1;
-      await delay(200);
-    }
-
-    bar.style.width = '100%';
-    plog('🏁 Done. Total products: ' + storeProducts.length);
-
-    document.getElementById('ps1').textContent = storeProducts.length.toLocaleString();
-    let withSku = 0, withOptions = 0, totalSkus = 0;
-    for (const p of storeProducts) {
-      if (p.sku) withSku++;
-      if (p.skus && p.skus.length > 0) { withOptions++; totalSkus += p.skus.length; }
-      else if (p.sku) totalSkus++;
-    }
-    document.getElementById('ps2').textContent = withSku.toLocaleString();
-    document.getElementById('ps3').textContent = withOptions.toLocaleString();
-    document.getElementById('ps4').textContent = totalSkus.toLocaleString();
-    document.getElementById('pullStats').classList.remove('hidden');
-    document.getElementById('step3').classList.remove('hidden');
-
-    if (storeProducts.length > 0) {
-      showStatus('authStatus', '✅ تم جلب ' + storeProducts.length + ' منتج بنجاح.', 'ok');
-    }
-  } catch (e) {
-    plog('❌ ' + e.message);
-    showStatus('authStatus', '❌ ' + e.message, 'err');
-  }
-
-  document.getElementById('pullBtn').disabled = false;
-}
-
-// ==================== SUPPLIER CSV ====================
-function normalizeSku(value) {
-  return String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '');
-}
-
-function parseNumeric(value) {
-  const n = parseFloat(String(value || '').trim());
-  return Number.isFinite(n) ? n : null;
-}
-
-function extractAmount(val) {
-  if (val == null) return null;
-  if (typeof val === 'object') return parseNumeric(val.amount);
-  return parseNumeric(val);
-}
-
-function percentChanged(oldVal, newVal) {
-  if (newVal == null) return false;
-  if (oldVal == null || oldVal === 0) return newVal !== 0;
-  return Math.abs((newVal - oldVal) / oldVal) > 0.02;
-}
-
-function setSupplierEncoding(enc) {
-  supplierEncoding = enc;
-  document.getElementById('encodingInfo').textContent = 'الترميز الحالي: ' + enc;
-}
-
-function showSupplierMessage(msg, type) {
-  const el = document.getElementById('supInfo');
-  el.className = 'status ' + type;
-  el.innerHTML = msg;
-}
-
-const SUPPLIER_HEADER_ROW = 7;   // 1-based: row 7 = headers, row 8+ = data
-
-async function loadSupplierFile(ev) {
-  const file = ev.target.files && ev.target.files[0];
-  if (!file) return;
-
-  selectedSkuColumn = '';
-  supplierMap = new Map();
-  supplierSkuSet = new Set();
-  lastExportResult = null;
-  document.getElementById('compareBtn').disabled = true;
-  document.getElementById('columnSelectionArea').classList.add('hidden');
-  document.getElementById('exportStats').classList.add('hidden');
-  document.getElementById('exportBtnsRow').classList.add('hidden');
-
-  const isXlsx = /\.xlsx?$/i.test(file.name);
-
-  try {
-    const buffer = await file.arrayBuffer();
-    var headers, rows;
-
-    if (isXlsx) {
-      var result = parseXlsxBuffer(buffer);
-      headers = result.headers;
-      rows = result.rows;
-    } else {
-      var result = parseCsvBuffer(buffer);
-      headers = result.headers;
-      rows = result.rows;
-    }
-
-    if (!headers.length) {
-      showSupplierMessage('❌ الملف لا يحتوي Header واضح في الصف ' + SUPPLIER_HEADER_ROW + '.', 'err');
-      return;
-    }
-
-    if (headers.some(h => /�/.test(h))) {
-      showSupplierMessage('⚠️ أحرف غير واضحة في العناوين. جرّب التحويل إلى Windows-1256.', 'warn');
-    }
-
-    supplierHeaders = headers;
-    supplierRows = rows;
-
-    renderSkuColumnOptions(headers);
-    renderCsvPreview(supplierRows, headers);
-    document.getElementById('columnSelectionArea').classList.remove('hidden');
-
-    if (!supplierRows.length) {
-      showSupplierMessage('⚠️ الملف يحتوي Header لكن لا توجد بيانات.', 'warn');
-      return;
-    }
-
-    var fmt = isXlsx ? 'XLSX' : 'CSV';
-    showSupplierMessage(
-      '✅ تم تحميل ' + fmt + ' بنجاح: ' + file.name +
-      ' | هيدر من الصف ' + SUPPLIER_HEADER_ROW +
-      ' | عدد الصفوف: ' + supplierRows.length.toLocaleString(), 'ok');
-  } catch (e) {
-    showSupplierMessage('❌ فشل قراءة الملف: ' + e.message, 'err');
-  }
-}
-
-/* ── Parse XLSX: header from SUPPLIER_HEADER_ROW ──────────────── */
-
-function parseXlsxBuffer(buffer) {
-  var wb = XLSX.read(buffer, { type: 'array' });
-  var sheetName = wb.SheetNames[0];
-  var ws = wb.Sheets[sheetName];
-  var aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-
-  var hdrIdx = SUPPLIER_HEADER_ROW - 1;   // 0-based
-  if (aoa.length <= hdrIdx) return { headers: [], rows: [] };
-
-  var rawHeaders = aoa[hdrIdx];
-  var colMap = [];   // {idx: original column, name: header}
-  for (var c = 0; c < rawHeaders.length; c++) {
-    var h = String(rawHeaders[c] == null ? '' : rawHeaders[c]).trim();
-    if (h !== '') colMap.push({ idx: c, name: h });
-  }
-  var headers = colMap.map(function(e) { return e.name; });
-
-  var rows = [];
-  for (var i = hdrIdx + 1; i < aoa.length; i++) {
-    var raw = aoa[i];
-    var obj = {};
-    var hasValue = false;
-    for (var c = 0; c < colMap.length; c++) {
-      var val = String(raw[colMap[c].idx] == null ? '' : raw[colMap[c].idx]).trim();
-      obj[colMap[c].name] = val;
-      if (val) hasValue = true;
-    }
-    if (hasValue) rows.push(obj);
-  }
-
-  return { headers: headers, rows: rows };
-}
-
-/* ── Parse CSV: header from SUPPLIER_HEADER_ROW ───────────────── */
-
-function parseCsvBuffer(buffer) {
-  var decoder = new TextDecoder(supplierEncoding, { fatal: false });
-  var text = decoder.decode(buffer);
-
-  var parsed = Papa.parse(text, {
-    header: false,
-    skipEmptyLines: false,
-  });
-
-  var allRows = parsed.data || [];
-  var hdrIdx = SUPPLIER_HEADER_ROW - 1;
-  if (allRows.length <= hdrIdx) return { headers: [], rows: [] };
-
-  var rawHeaders = allRows[hdrIdx];
-  var colMap = [];
-  for (var c = 0; c < rawHeaders.length; c++) {
-    var h = String(rawHeaders[c] == null ? '' : rawHeaders[c]).trim();
-    if (h !== '') colMap.push({ idx: c, name: h });
-  }
-  var headers = colMap.map(function(e) { return e.name; });
-
-  var rows = [];
-  for (var i = hdrIdx + 1; i < allRows.length; i++) {
-    var raw = allRows[i];
-    var obj = {};
-    var hasValue = false;
-    for (var c = 0; c < colMap.length; c++) {
-      var val = String(raw[colMap[c].idx] == null ? '' : raw[colMap[c].idx]).trim();
-      obj[colMap[c].name] = val;
-      if (val) hasValue = true;
-    }
-    if (hasValue) rows.push(obj);
-  }
-
-  return { headers: headers, rows: rows };
-}
-
-function renderSkuColumnOptions(headers) {
-  const sel = document.getElementById('skuColumnSelect');
-  sel.innerHTML = '<option value="">— اختر عمود SKU —</option>';
-  headers.forEach(h => {
-    const option = document.createElement('option');
-    option.value = h;
-    option.textContent = h;
-    sel.appendChild(option);
-  });
-  document.getElementById('useSkuColBtn').disabled = false;
-
-  ['costColumnSelect', 'retailPriceColumnSelect'].forEach(id => {
-    const s = document.getElementById(id);
-    s.innerHTML = '<option value="">— لا شيء —</option>';
-    headers.forEach(h => {
-      const o = document.createElement('option');
-      o.value = h;
-      o.textContent = h;
-      s.appendChild(o);
-    });
-  });
-}
-
-function renderCsvPreview(rows, headers) {
-  const preview = document.getElementById('csvPreview');
-  const top = rows.slice(0, 5).map(r => {
-    const out = {};
-    headers.forEach(h => { out[h] = r[h] || ''; });
-    return out;
-  });
-  preview.textContent = JSON.stringify(top, null, 2);
-  preview.classList.remove('hidden');
-}
-
-function buildSupplierMap(rows, skuCol, costCol, retailCol) {
-  const map = new Map();
-  const skuSet = new Set();
-  let totalRows = 0;
-  let validSkus = 0;
-  let invalidSkus = 0;
-
-  for (const row of rows) {
-    totalRows++;
-    const raw = row[skuCol];
-    const key = normalizeSku(raw);
-
-    if (!key) {
-      invalidSkus++;
-      continue;
-    }
-
-    validSkus++;
-    skuSet.add(key);
-    map.set(key, {
-      cost: costCol ? parseNumeric(row[costCol]) : null,
-      retailPrice: retailCol ? parseNumeric(row[retailCol]) : null,
-    });
-  }
-
-  return {
-    supplierMap: map,
-    supplierSkuSet: skuSet,
-    stats: { totalRows, validSkus, invalidSkus },
-  };
-}
-
-function useSkuColumn() {
-  const col = document.getElementById('skuColumnSelect').value;
-  if (!col) {
-    showSupplierMessage('❌ اختر عمود SKU أولاً.', 'err');
-    return;
-  }
-
-  selectedSkuColumn = col;
-  const costCol = document.getElementById('costColumnSelect').value || '';
-  const retailCol = document.getElementById('retailPriceColumnSelect').value || '';
-
-  const result = buildSupplierMap(supplierRows, col, costCol, retailCol);
-  supplierMap = result.supplierMap;
-  supplierSkuSet = result.supplierSkuSet;
-
-  const s = result.stats;
-  showSupplierMessage(
-    '✅ تم اختيار عمود SKU: <b>' + col + '</b>' +
-    '<br>إجمالي الصفوف: ' + s.totalRows +
-    ' | SKU صالح: ' + s.validSkus +
-    ' | غير صالح: ' + s.invalidSkus,
-    s.invalidSkus > 0 ? 'warn' : 'ok'
-  );
-
-  if (storeProducts.length) {
-    document.getElementById('compareBtn').disabled = false;
-  }
-
-  runChangeDetection();
-}
-
-function buildProductGroups(products) {
-  return (products || []).map(p => {
-    const variants = Array.isArray(p.skus) ? p.skus : [];
-    return {
-      productId: p.id,
-      productName: p.name || '(بدون اسم)',
-      productSkuIfNoVariants: variants.length ? '' : (p.sku || ''),
-      variants: variants.map(v => ({
-        variantId: v.id,
-        variantName: v.name || (v.options ? JSON.stringify(v.options) : 'Variant'),
-        sku: v.sku || '',
-      })),
-    };
-  });
-}
-
-function getSupplierRow(key) {
-  if (!key) return null;
-  return supplierMap.get(key) || null;
-}
-
-function buildChangeReport(products, sMap, skuSet) {
-  const report = [];
-
-  for (const p of products) {
-    const variants = Array.isArray(p.skus) ? p.skus : [];
-    const isSimple = variants.length === 0;
-
-    const entry = {
-      productId: p.id,
-      hasPriceChanges: false,
-      hasQuantityChanges: false,
-      parentRow: { productId: p.id, productName: p.name || '' },
-      variantRows: [],
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <label class="block border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50 hover:bg-slate-100 transition cursor-pointer">
+          <p class="font-semibold mb-1">ملف المورد (إجباري)</p>
+          <p class="text-xs text-slate-500 mb-3">يشمل items/SKU + stock + price</p>
+          <input id="supplierFile" type="file" accept=".csv,.xlsx,.xls" class="block w-full text-sm file:mr-0 file:ml-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-slate-200 file:text-slate-700">
+        </label>
+
+        <div class="border border-slate-200 rounded-xl p-4 bg-slate-50">
+          <p class="font-semibold mb-3">خيارات التحديث</p>
+          <label class="flex items-center gap-2 text-sm mb-2 cursor-pointer">
+            <input id="zeroMissingSku" type="checkbox" class="w-4 h-4" checked>
+            تصفير مخزون SKU غير الموجود في ملف المورد
+          </label>
+          <p class="text-xs text-slate-500">التصفير يطبق على SKU الموجود في سلة فقط.</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 mb-6">
+        <button id="previewBtn" class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">معاينة التحديث (Dry Run)</button>
+        <button id="applyBtn" class="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed" disabled>تنفيذ التحديث الآن</button>
+      </div>
+
+      <div id="messages" class="space-y-2 mb-6"></div>
+
+      <div id="progressWrap" class="hidden mb-6 border border-slate-200 rounded-xl p-4 bg-slate-50">
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <p id="progressText" class="text-sm font-semibold text-slate-700">جاري التنفيذ...</p>
+          <p id="progressPercent" class="text-sm font-bold text-slate-700">0%</p>
+        </div>
+        <div class="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+          <div id="progressBar" class="h-3 bg-emerald-600 transition-all duration-300" style="width:0%"></div>
+        </div>
+        <p id="progressDetail" class="text-xs text-slate-600 mt-2">تم 0 من 0 | المتبقي 0</p>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">SKU المورد</p>
+          <p id="statSupplierSkus" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">SKU سلة</p>
+          <p id="statSallaSkus" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">تحديث مخزون</p>
+          <p id="statQty" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">تحديث سعر</p>
+          <p id="statPrice" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">تم تنفيذه</p>
+          <p id="statDone" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">المتبقي</p>
+          <p id="statRemaining" class="text-xl font-bold">0</p>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <h2 class="font-semibold">معاينة أول 30 صف سيتم تعديلها</h2>
+      </div>
+
+      <div class="overflow-auto border border-slate-200 rounded-xl">
+        <table id="previewTable" class="min-w-full text-sm"></table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const supplierInput = document.getElementById("supplierFile");
+    const zeroMissingSkuInput = document.getElementById("zeroMissingSku");
+    const previewBtn = document.getElementById("previewBtn");
+    const applyBtn = document.getElementById("applyBtn");
+    const connectBtn = document.getElementById("connectBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
+    const statusEl = document.getElementById("connectionStatus");
+    const messagesEl = document.getElementById("messages");
+    const previewTable = document.getElementById("previewTable");
+    const progressWrap = document.getElementById("progressWrap");
+    const progressBar = document.getElementById("progressBar");
+    const progressPercent = document.getElementById("progressPercent");
+    const progressText = document.getElementById("progressText");
+    const progressDetail = document.getElementById("progressDetail");
+
+    const ALIASES = {
+      sku: [
+        "items", "item", "item#", "item no", "item no.", "item number", "item code",
+        "code", "product code", "product sku", "sku", "variant sku", "variantsku",
+        "رمز المنتج sku", "رمز المنتج", "sku code"
+      ],
+      price: [
+        "price", "unit price", "variant price", "selling price", "sale price", "retail",
+        "our price", "wholesale", "cost", "final price", "price sar", "سعر المنتج", "السعر"
+      ],
+      stock: [
+        "stock", "qty", "quantity", "qoh", "qty on hand", "available", "available qty",
+        "inventory", "on hand", "instock", "المخزون", "الكمية"
+      ]
     };
 
-    const sources = isSimple
-      ? [{ sku: p.sku || '', variantId: null, src: p }]
-      : variants.map(v => ({ sku: v.sku || '', variantId: v.id, src: v }));
+    let lastPreviewReady = false;
+    let activeJobId = "";
+    let jobPollTimer = null;
 
-    for (const { sku, variantId, src } of sources) {
-      const key = normalizeSku(sku);
-      if (!key) continue;
+    connectBtn.addEventListener("click", () => {
+      window.location.href = "/auth/salla";
+    });
 
-      const sup = sMap.get(key) || null;
-      const inSupplier = skuSet.has(key);
+    logoutBtn.addEventListener("click", async () => {
+      stopJobPolling();
+      await fetch("/api/logout", { method: "POST" });
+      lastPreviewReady = false;
+      applyBtn.disabled = true;
+      resetProgressUI();
+      await refreshStatus();
+      addMessage("info", "تم فصل الربط.");
+    });
 
-      // Current Salla values
-      const oldCost = extractAmount(src.cost_price);
-      const oldPrice = extractAmount(src.price);
-      const oldSalePrice = extractAmount(src.sale_price);
-      const oldQty = parseNumeric(src.stock_quantity != null ? src.stock_quantity : src.quantity);
+    previewBtn.addEventListener("click", async () => {
+      await runSync(true);
+    });
 
-      // New supplier values
-      const newCost = sup ? sup.cost : null;
-      const newPrice = sup ? sup.retailPrice : null;
-      const newSalePrice = sup ? sup.retailPrice : null;
-      const newQty = inSupplier ? 500 : 0;
+    applyBtn.addEventListener("click", async () => {
+      const ok = confirm("سيتم تنفيذ التحديث مباشرة على متجر سلة. هل أنت متأكد؟");
+      if (!ok) return;
+      await runSync(false);
+    });
 
-      // >2% change detection
-      const costDiff = percentChanged(oldCost, newCost);
-      const priceDiff = percentChanged(oldPrice, newPrice);
-      const saleDiff = percentChanged(oldSalePrice, newSalePrice);
-      const qtyDiff = percentChanged(oldQty, newQty);
+    window.addEventListener("DOMContentLoaded", async () => {
+      resetProgressUI();
+      await refreshStatus();
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("auth") === "success") {
+        addMessage("success", "تم الربط مع سلة بنجاح.");
+        window.history.replaceState({}, document.title, "/index.html");
+      }
+    });
 
-      const priceChanged = costDiff || priceDiff || saleDiff;
-      const quantityChanged = qtyDiff;
+    async function runSync(dryRun) {
+      stopJobPolling();
+      clearUI();
+      applyBtn.disabled = true;
+      lastPreviewReady = false;
 
-      if (priceChanged) entry.hasPriceChanges = true;
-      if (quantityChanged) entry.hasQuantityChanges = true;
+      const status = await getStatus();
+      if (!status.connected) {
+        addMessage("error", "أكمل ربط سلة أولاً من زر (ربط سلة).");
+        return;
+      }
 
-      entry.variantRows.push({
-        sku,
-        variantId,
-        priceChanged,
-        quantityChanged,
-        newValues: {
-          cost: newCost,
-          price: newPrice,
-          salePrice: newSalePrice,
-          quantity: newQty,
-        },
-      });
-    }
+      const supplierFile = supplierInput.files[0];
+      if (!supplierFile) {
+        addMessage("error", "ارفع ملف المورد أولاً.");
+        return;
+      }
 
-    report.push(entry);
-  }
+      try {
+        const supplierItems = await readSupplierItems(supplierFile);
+        if (!supplierItems.length) {
+          throw new Error("لم يتم استخراج أي SKU من ملف المورد.");
+        }
 
-  return report;
-}
+        addMessage("info", `تم تجهيز ${supplierItems.length} صف من ملف المورد.`);
 
-function buildExportRows(changeReport) {
-  const priceExportRows = [];
-  const quantityExportRows = [];
+        const response = await fetch("/api/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            supplierItems,
+            zeroMissingSku: zeroMissingSkuInput.checked,
+            dryRun,
+            async: !dryRun
+          })
+        });
 
-  for (const entry of changeReport) {
-    const pVars = entry.variantRows.filter(v => v.priceChanged);
-    if (pVars.length) {
-      priceExportRows.push({ type: 'parent', productId: entry.parentRow.productId, productName: entry.parentRow.productName });
-      for (const v of pVars) {
-        priceExportRows.push({ type: 'variant', sku: v.sku, variantId: v.variantId, newValues: v.newValues });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.message || data.error || "فشل غير معروف من الخادم.");
+        }
+
+        setStats(data.stats);
+        renderPreview(data.previewRows || []);
+
+        if (dryRun) {
+          addMessage("success", "تم إنشاء المعاينة بنجاح.");
+          addMessage("info", `سيتم تحديث المخزون: ${data.stats.plannedQuantityUpdates} | الأسعار: ${data.stats.plannedPriceUpdates}`);
+          if (data.stats.missingSupplierInSalla > 0) {
+            addMessage("warning", `SKU بالمورد وغير موجود في سلة: ${data.stats.missingSupplierInSalla}`);
+          }
+          lastPreviewReady = true;
+          applyBtn.disabled = (data.stats.plannedQuantityUpdates + data.stats.plannedPriceUpdates) === 0;
+          return;
+        }
+
+        if (data.async && data.job_id) {
+          activeJobId = data.job_id;
+          addMessage("info", "بدأ تنفيذ التحديث. سيتم عرض التقدم المباشر الآن.");
+          updateProgressUI(data.progress || {}, "جاري التنفيذ");
+          startJobPolling(activeJobId);
+          return;
+        }
+
+        applySyncResult(data);
+      } catch (error) {
+        addMessage("error", `تعذر إكمال العملية: ${error.message}`);
       }
     }
 
-    const qVars = entry.variantRows.filter(v => v.quantityChanged);
-    if (qVars.length) {
-      quantityExportRows.push({ type: 'parent', productId: entry.parentRow.productId, productName: entry.parentRow.productName });
-      for (const v of qVars) {
-        quantityExportRows.push({ type: 'variant', sku: v.sku, variantId: v.variantId, newValues: v.newValues });
+    function startJobPolling(jobId) {
+      stopJobPolling();
+      jobPollTimer = setInterval(() => {
+        pollSyncJob(jobId).catch(() => {});
+      }, 1200);
+      pollSyncJob(jobId).catch(() => {});
+    }
+
+    function stopJobPolling() {
+      if (jobPollTimer) {
+        clearInterval(jobPollTimer);
+        jobPollTimer = null;
       }
+      activeJobId = "";
     }
-  }
 
-  return { priceExportRows, quantityExportRows };
-}
+    async function pollSyncJob(jobId) {
+      if (!jobId) return;
 
-/* ── Salla Price-Import XLSX ─────────────────────────────────── */
-
-function formatVariantOptions(variant) {
-  if (!variant) return '';
-  if (variant.name) return variant.name;
-  if (Array.isArray(variant.options))
-    return variant.options.map(function(o) { return o.value || o.name || ''; }).join(' / ');
-  if (variant.options && typeof variant.options === 'object')
-    return Object.values(variant.options).join(' / ');
-  return '';
-}
-
-function generatePriceXlsx(priceExportRows, products) {
-  /* ---- lookup maps ---- */
-  var productMap = new Map();
-  var variantMap = new Map();
-  (products || []).forEach(function(p) {
-    productMap.set(p.id, p);
-    if (Array.isArray(p.skus))
-      p.skus.forEach(function(v) { variantMap.set(v.id, v); });
-  });
-
-  function pv(nv, old) { return nv != null ? nv : (old != null ? old : ''); }
-
-  /* ---- template structure (exact Salla format) ---- */
-  var groupRow = [
-    'بيانات المنتج',    // A  No.
-    '',                  // B  النوع           (merged with A)
-    '',                  // C  أسم المنتج      (merged with A)
-    '',                  // D  رمز المنتج sku  (merged with A)
-    'الأسعار',           // E  سعر المنتج
-    '',                  // F  سعر التكلفة      (merged with E)
-    '',                  // G  السعر المخفض     (merged with E)
-    '',                  // H  تاريخ بداية التخفيض (merged with E)
-    '',                  // I  تاريخ نهاية التخفيض (merged with E)
-  ];
-  var headerRow = [
-    'No.',
-    'النوع',
-    'أسم المنتج',
-    'رمز المنتج sku',
-    'سعر المنتج',
-    'سعر التكلفة',
-    'السعر المخفض',
-    'تاريخ بداية التخفيض',
-    'تاريخ نهاية التخفيض',
-  ];
-
-  var aoa = [groupRow, headerRow];
-  var skuCells = [];  // {r, sku} – rows needing ="…" formula
-  var rowNum = 0;     // auto-increment No. column
-
-  /* ---- group parent+children from the flat array ---- */
-  var groups = [], cur = null;
-  priceExportRows.forEach(function(row) {
-    if (row.type === 'parent') { cur = { parent: row, variants: [] }; groups.push(cur); }
-    else if (cur) cur.variants.push(row);
-  });
-
-  /* ---- build data rows ---- */
-  groups.forEach(function(g) {
-    var p = productMap.get(g.parent.productId);
-    if (!p) return;
-
-    var isSimple = g.variants.length === 1 && g.variants[0].variantId === null;
-
-    if (isSimple) {
-      var v  = g.variants[0];
-      var nv = v.newValues;
-      rowNum++;
-      skuCells.push({ r: aoa.length, sku: v.sku });
-      aoa.push([
-        rowNum,
-        'منتج',
-        p.name || '',
-        v.sku,
-        pv(nv.price,     extractAmount(p.price)),
-        pv(nv.cost,      extractAmount(p.cost_price)),
-        pv(nv.salePrice, extractAmount(p.sale_price)),
-        p.sale_start || '',
-        p.sale_end || '',
-      ]);
-    } else {
-      /* parent row – identification only, no prices */
-      rowNum++;
-      aoa.push([rowNum, 'منتج', p.name || '', '', '', '', '', '', '']);
-
-      g.variants.forEach(function(v) {
-        var vd = variantMap.get(v.variantId) || {};
-        var nv = v.newValues;
-        rowNum++;
-        skuCells.push({ r: aoa.length, sku: v.sku });
-        aoa.push([
-          rowNum,
-          'خيار',
-          formatVariantOptions(vd),
-          v.sku,
-          pv(nv.price,     extractAmount(vd.price)),
-          pv(nv.cost,      extractAmount(vd.cost_price)),
-          pv(nv.salePrice, extractAmount(vd.sale_price)),
-          vd.sale_start || p.sale_start || '',
-          vd.sale_end || p.sale_end || '',
-        ]);
-      });
-    }
-  });
-
-  /* ---- build worksheet ---- */
-  var ws = XLSX.utils.aoa_to_sheet(aoa);
-
-  /* merge group headers: بيانات المنتج A1:D1, الأسعار E1:I1 */
-  ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
-    { s: { r: 0, c: 4 }, e: { r: 0, c: 8 } },
-  ];
-
-  /* SKU cells → text formula  ="SKU_VALUE" */
-  skuCells.forEach(function(entry) {
-    var ref = XLSX.utils.encode_cell({ r: entry.r, c: 3 });
-    ws[ref] = { t: 'str', f: '"' + entry.sku.replace(/"/g, '""') + '"' };
-  });
-
-  /* column widths */
-  ws['!cols'] = [
-    { wch: 6 },   // No.
-    { wch: 10 },  // النوع
-    { wch: 35 },  // أسم المنتج
-    { wch: 20 },  // رمز المنتج sku
-    { wch: 12 },  // سعر المنتج
-    { wch: 14 },  // سعر التكلفة
-    { wch: 14 },  // السعر المخفض
-    { wch: 22 },  // تاريخ بداية التخفيض
-    { wch: 22 },  // تاريخ نهاية التخفيض
-  ];
-
-  /* ---- write file ---- */
-  var wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'الأسعار');
-  XLSX.writeFile(wb, 'prices-export.xlsx');
-}
-
-/* ── Salla Quantity-Import XLSX ──────────────────────────────── */
-
-function generateQuantityXlsx(quantityExportRows, products) {
-  /* ---- lookup maps ---- */
-  var productMap = new Map();
-  var variantMap = new Map();
-  (products || []).forEach(function(p) {
-    productMap.set(p.id, p);
-    if (Array.isArray(p.skus))
-      p.skus.forEach(function(v) { variantMap.set(v.id, v); });
-  });
-
-  /* ---- template structure (exact Salla format) ---- */
-  var groupRow = [
-    'بيانات المنتج',    // A  No.
-    '',                  // B  النوع           (merged with A)
-    '',                  // C  أسم المنتج      (merged with A)
-    '',                  // D  رمز المنتج sku  (merged with A)
-    'الكميات',           // E  غير محدود الكمية
-    '',                  // F  الكمية           (merged with E)
-  ];
-  var headerRow = [
-    'No.',
-    'النوع',
-    'أسم المنتج',
-    'رمز المنتج sku',
-    'غير محدود الكمية',
-    'الكمية',
-  ];
-
-  var aoa = [groupRow, headerRow];
-  var skuCells = [];  // {r, sku}
-  var rowNum = 0;     // auto-increment No. column
-
-  /* ---- group parent+children from the flat array ---- */
-  var groups = [], cur = null;
-  quantityExportRows.forEach(function(row) {
-    if (row.type === 'parent') { cur = { parent: row, variants: [] }; groups.push(cur); }
-    else if (cur) cur.variants.push(row);
-  });
-
-  /* ---- build data rows ---- */
-  groups.forEach(function(g) {
-    var p = productMap.get(g.parent.productId);
-    if (!p) return;
-
-    var isSimple = g.variants.length === 1 && g.variants[0].variantId === null;
-
-    if (isSimple) {
-      var v = g.variants[0];
-      rowNum++;
-      skuCells.push({ r: aoa.length, sku: v.sku });
-      aoa.push([
-        rowNum,
-        'منتج',
-        p.name || '',
-        v.sku,
-        '',
-        v.newValues.quantity,
-      ]);
-    } else {
-      /* parent row – identification only, no quantity */
-      rowNum++;
-      aoa.push([rowNum, 'منتج', p.name || '', '', '', '']);
-
-      g.variants.forEach(function(v) {
-        var vd = variantMap.get(v.variantId) || {};
-        rowNum++;
-        skuCells.push({ r: aoa.length, sku: v.sku });
-        aoa.push([
-          rowNum,
-          'خيار',
-          formatVariantOptions(vd),
-          v.sku,
-          '',
-          v.newValues.quantity,
-        ]);
-      });
-    }
-  });
-
-  /* ---- build worksheet ---- */
-  var ws = XLSX.utils.aoa_to_sheet(aoa);
-
-  /* merge group headers: بيانات المنتج A1:D1, الكميات E1:F1 */
-  ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
-    { s: { r: 0, c: 4 }, e: { r: 0, c: 5 } },
-  ];
-
-  /* SKU cells → text formula  ="SKU_VALUE" */
-  skuCells.forEach(function(entry) {
-    var ref = XLSX.utils.encode_cell({ r: entry.r, c: 3 });
-    ws[ref] = { t: 'str', f: '"' + entry.sku.replace(/"/g, '""') + '"' };
-  });
-
-  /* column widths */
-  ws['!cols'] = [
-    { wch: 6 },   // No.
-    { wch: 10 },  // النوع
-    { wch: 35 },  // أسم المنتج
-    { wch: 20 },  // رمز المنتج sku
-    { wch: 18 },  // غير محدود الكمية
-    { wch: 10 },  // الكمية
-  ];
-
-  /* ---- write file ---- */
-  var wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'الكميات');
-  XLSX.writeFile(wb, 'quantities-export.xlsx');
-}
-
-/* ── Change-detection wiring + download handlers ─────────────── */
-
-function runChangeDetection() {
-  lastExportResult = null;
-  document.getElementById('exportStats').classList.add('hidden');
-  document.getElementById('exportBtnsRow').classList.add('hidden');
-  document.getElementById('dlPriceBtn').disabled = true;
-  document.getElementById('dlQtyBtn').disabled = true;
-
-  if (!storeProducts.length || !supplierMap.size) return;
-
-  var report = buildChangeReport(storeProducts, supplierMap, supplierSkuSet);
-  var result = buildExportRows(report);
-  lastExportResult = result;
-
-  /* count Salla SKUs + matches */
-  var totalSallaSkus = 0;
-  var matchedSkus = 0;
-  for (var i = 0; i < storeProducts.length; i++) {
-    var p = storeProducts[i];
-    var variants = Array.isArray(p.skus) ? p.skus : [];
-    if (variants.length === 0) {
-      var k = normalizeSku(p.sku);
-      if (k) { totalSallaSkus++; if (supplierMap.has(k)) matchedSkus++; }
-    } else {
-      for (var j = 0; j < variants.length; j++) {
-        var k2 = normalizeSku(variants[j].sku);
-        if (k2) { totalSallaSkus++; if (supplierMap.has(k2)) matchedSkus++; }
+      const response = await fetch(`/api/sync/progress?job_id=${encodeURIComponent(jobId)}`);
+      const data = await response.json();
+      if (!response.ok) {
+        stopJobPolling();
+        addMessage("error", data.message || "تعذر قراءة تقدم المهمة.");
+        return;
       }
-    }
-  }
 
-  var priceVarCount = result.priceExportRows.filter(function(r) { return r.type === 'variant'; }).length;
-  var qtyVarCount   = result.quantityExportRows.filter(function(r) { return r.type === 'variant'; }).length;
+      updateProgressUI(data.progress || {}, phaseLabel(data.status, data.progress?.phase));
 
-  document.getElementById('es1').textContent = totalSallaSkus.toLocaleString();
-  document.getElementById('es2').textContent = matchedSkus.toLocaleString();
-  document.getElementById('es3').textContent = (totalSallaSkus - matchedSkus).toLocaleString();
-  document.getElementById('es4').textContent = priceVarCount.toLocaleString();
-  document.getElementById('es5').textContent = qtyVarCount.toLocaleString();
-  document.getElementById('exportStats').classList.remove('hidden');
-
-  document.getElementById('exportBtnsRow').classList.remove('hidden');
-  document.getElementById('dlPriceBtn').disabled = (priceVarCount === 0);
-  document.getElementById('dlQtyBtn').disabled = (qtyVarCount === 0);
-}
-
-function downloadPriceXlsx() {
-  if (!lastExportResult || !lastExportResult.priceExportRows.length) {
-    showSupplierMessage('❌ لا توجد صفوف أسعار للتصدير.', 'err');
-    return;
-  }
-  try {
-    generatePriceXlsx(lastExportResult.priceExportRows, storeProducts);
-    showSupplierMessage('✅ تم تحميل prices-export.xlsx', 'ok');
-  } catch (e) {
-    showSupplierMessage('❌ فشل التصدير: ' + e.message, 'err');
-  }
-}
-
-function downloadQuantityXlsx() {
-  if (!lastExportResult || !lastExportResult.quantityExportRows.length) {
-    showSupplierMessage('❌ لا توجد صفوف كميات للتصدير.', 'err');
-    return;
-  }
-  try {
-    generateQuantityXlsx(lastExportResult.quantityExportRows, storeProducts);
-    showSupplierMessage('✅ تم تحميل quantities-export.xlsx', 'ok');
-  } catch (e) {
-    showSupplierMessage('❌ فشل التصدير: ' + e.message, 'err');
-  }
-}
-
-function compareAndUpdate() {
-  const log = document.getElementById('cmpLog');
-  log.classList.remove('hidden');
-  log.textContent = '';
-  lastMatchResult = null;
-
-  if (!storeProducts.length) {
-    log.textContent = '❌ لا توجد منتجات من سلة. نفّذ Fetch Products أولاً.';
-    return;
-  }
-  if (!supplierRows.length || !selectedSkuColumn) {
-    log.textContent = '❌ ارفع CSV واختر عمود SKU أولاً.';
-    return;
-  }
-
-  const groups = buildProductGroups(storeProducts);
-  let matched = 0;
-  let unmatched = 0;
-  const lines = [];
-  const exportRows = [];
-
-  for (const g of groups) {
-    lines.push('');
-    lines.push('📦 ' + g.productName + ' (ID: ' + g.productId + ')');
-
-    if (g.variants.length > 0) {
-      exportRows.push({
-        row_type: 'PRODUCT',
-        product_id: g.productId,
-        product_name: g.productName,
-        variant_id: '',
-        variant_name: '',
-        sku: '',
-        matched: '',
-        supplier_cost: '',
-        supplier_retail: '',
-      });
-
-      for (const v of g.variants) {
-        const key = normalizeSku(v.sku);
-        const ok = key && supplierMap.has(key);
-        if (ok) matched++; else unmatched++;
-        const supRow = ok ? getSupplierRow(key) : null;
-
-        lines.push('   └─ ' + v.variantName + ' | SKU: ' + (v.sku || '-') + ' | ' + (ok ? '✅ مطابق' : '❌ غير مطابق'));
-
-        exportRows.push({
-          row_type: 'VARIANT',
-          product_id: g.productId,
-          product_name: g.productName,
-          variant_id: v.variantId,
-          variant_name: v.variantName,
-          sku: v.sku || '',
-          matched: ok ? 'YES' : 'NO',
-          supplier_cost: supRow ? (supRow.cost ?? '') : '',
-          supplier_retail: supRow ? (supRow.retailPrice ?? '') : '',
+      if (data.stats) {
+        setStats({
+          ...data.stats,
+          done: data.progress?.done || 0,
+          remaining: data.progress?.remaining || 0
         });
       }
-    } else {
-      const key = normalizeSku(g.productSkuIfNoVariants);
-      const ok = key && supplierMap.has(key);
-      if (ok) matched++; else unmatched++;
-      const supRow = ok ? getSupplierRow(key) : null;
 
-      lines.push('   └─ Product SKU: ' + (g.productSkuIfNoVariants || '-') + ' | ' + (ok ? '✅ مطابق' : '❌ غير مطابق'));
+      if (data.status === "completed") {
+        stopJobPolling();
+        applySyncResult(data.result || {});
+        updateProgressUI(data.progress || {}, "اكتمل التنفيذ");
+        applyBtn.disabled = false;
+        return;
+      }
 
-      exportRows.push({
-        row_type: 'PRODUCT',
-        product_id: g.productId,
-        product_name: g.productName,
-        variant_id: '',
-        variant_name: '',
-        sku: g.productSkuIfNoVariants || '',
-        matched: ok ? 'YES' : 'NO',
-        supplier_cost: supRow ? (supRow.cost ?? '') : '',
-        supplier_retail: supRow ? (supRow.retailPrice ?? '') : '',
+      if (data.status === "failed") {
+        stopJobPolling();
+        addMessage("error", data.error || "فشل تنفيذ المهمة.");
+        applyBtn.disabled = false;
+      }
+    }
+
+    function applySyncResult(data) {
+      if (data.stats) {
+        setStats({
+          ...data.stats,
+          done: Number(data.stats.quantityUpdated || 0) + Number(data.stats.priceUpdated || 0),
+          remaining: 0
+        });
+      }
+
+      if (Array.isArray(data.previewRows)) {
+        renderPreview(data.previewRows);
+      }
+
+      addMessage("success", "تم تنفيذ التحديث على سلة.");
+      addMessage("info", `نجح تحديث المخزون: ${data.stats?.quantityUpdated || 0} | نجح تحديث السعر: ${data.stats?.priceUpdated || 0}`);
+
+      if ((data.failedQuantityUpdates || []).length > 0) {
+        addMessage("warning", `فشل ${data.failedQuantityUpdates.length} صف في تحديث المخزون. راجع السجل.`);
+        console.table(data.failedQuantityUpdates);
+      }
+
+      if ((data.failedPriceUpdates || []).length > 0) {
+        addMessage("warning", `فشل ${data.failedPriceUpdates.length} SKU في تحديث السعر. راجع السجل.`);
+        console.table(data.failedPriceUpdates);
+      }
+    }
+
+    function updateProgressUI(progress, title) {
+      const total = Number(progress?.total || 0);
+      const done = Number(progress?.done || 0);
+      const remaining = Number(progress?.remaining || Math.max(0, total - done));
+      const percent = Number.isFinite(Number(progress?.percent))
+        ? Number(progress.percent)
+        : (total > 0 ? Number(((done / total) * 100).toFixed(1)) : 100);
+
+      const qtyDone = Number(progress?.quantity?.done || 0) + Number(progress?.quantity?.failed || 0);
+      const qtyTotal = Number(progress?.quantity?.total || 0);
+      const priceDone = Number(progress?.price?.done || 0) + Number(progress?.price?.failed || 0);
+      const priceTotal = Number(progress?.price?.total || 0);
+
+      progressWrap.classList.remove("hidden");
+      progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+      progressPercent.textContent = `${Math.max(0, Math.min(100, percent))}%`;
+      progressText.textContent = title || "جاري التنفيذ";
+      progressDetail.textContent = `تم ${done} من ${total} | المتبقي ${remaining} | مخزون ${qtyDone}/${qtyTotal} | سعر ${priceDone}/${priceTotal}`;
+
+      document.getElementById("statDone").textContent = done;
+      document.getElementById("statRemaining").textContent = remaining;
+    }
+
+    function resetProgressUI() {
+      progressWrap.classList.add("hidden");
+      progressBar.style.width = "0%";
+      progressPercent.textContent = "0%";
+      progressText.textContent = "جاري التنفيذ...";
+      progressDetail.textContent = "تم 0 من 0 | المتبقي 0";
+    }
+
+    function phaseLabel(status, phase) {
+      if (status === "completed") return "اكتمل التنفيذ";
+      if (status === "failed") return "فشل التنفيذ";
+      if (phase === "price") return "جاري تحديث الأسعار";
+      if (phase === "quantity") return "جاري تحديث المخزون";
+      return "جاري التنفيذ";
+    }
+
+    async function refreshStatus() {
+      const status = await getStatus();
+      if (status.connected) {
+        statusEl.textContent = "متصل";
+        statusEl.className = "font-semibold text-emerald-700";
+      } else {
+        statusEl.textContent = "غير متصل";
+        statusEl.className = "font-semibold text-rose-700";
+      }
+    }
+
+    async function getStatus() {
+      try {
+        const response = await fetch("/api/status");
+        if (!response.ok) return { connected: false };
+        return response.json();
+      } catch {
+        return { connected: false };
+      }
+    }
+
+    async function readSupplierItems(file) {
+      const wb = await readWorkbook(file);
+      const sheetName = pickBestSheetName(wb);
+      const ws = wb.Sheets[sheetName];
+      if (!ws) {
+        throw new Error("تعذر قراءة الشيت من ملف المورد.");
+      }
+
+      const aoa = XLSX.utils.sheet_to_json(ws, {
+        header: 1,
+        defval: "",
+        blankrows: false,
+        raw: false
+      });
+
+      if (!aoa.length) {
+        throw new Error("ملف المورد فارغ.");
+      }
+
+      const headerRowIndex = detectHeaderRowIndex(aoa);
+      const headerRow = aoa[headerRowIndex] || [];
+      const dataRows = aoa
+        .slice(headerRowIndex + 1)
+        .filter((row) => Array.isArray(row) && row.some((cell) => cleanText(cell) !== ""));
+
+      if (!dataRows.length) {
+        throw new Error("لم يتم العثور على بيانات في ملف المورد.");
+      }
+
+      const headers = headerRow.map((h, idx) => cleanText(h) || `COL_${idx + 1}`);
+
+      let skuIndex = detectColumnIndex(headers, ALIASES.sku, ["items", "item", "item#", "item no", "sku", "code"]);
+      let stockIndex = detectColumnIndex(headers, ALIASES.stock);
+      let priceIndex = detectColumnIndex(headers, ALIASES.price);
+
+      const inferred = inferColumnIndexesByContent(dataRows, headers);
+      if (skuIndex < 0) skuIndex = inferred.skuIndex;
+      if (stockIndex < 0) stockIndex = inferred.stockIndex;
+      if (priceIndex < 0) priceIndex = inferred.priceIndex;
+
+      if (skuIndex < 0) {
+        const sampleHeaders = headers.slice(0, 20).join(" | ");
+        throw new Error(`لم أجد عمود items/SKU في ملف المورد. العناوين المكتشفة: ${sampleHeaders}`);
+      }
+      if (stockIndex < 0) {
+        const sampleHeaders = headers.slice(0, 20).join(" | ");
+        throw new Error(`لم أجد عمود المخزون في ملف المورد. العناوين المكتشفة: ${sampleHeaders}`);
+      }
+      if (priceIndex < 0) {
+        const sampleHeaders = headers.slice(0, 20).join(" | ");
+        throw new Error(`لم أجد عمود السعر في ملف المورد. العناوين المكتشفة: ${sampleHeaders}`);
+      }
+
+      addMessage("info", `تم التعرف على الأعمدة: SKU=${headers[skuIndex]} | Stock=${headers[stockIndex]} | Price=${headers[priceIndex]} | Sheet=${sheetName}`);
+
+      const items = [];
+      for (const row of dataRows) {
+        const sku = cleanText(row[skuIndex]);
+        if (!sku) continue;
+        items.push({
+          sku,
+          stock: parseInteger(row[stockIndex]),
+          price: parseNumber(row[priceIndex])
+        });
+      }
+
+      return items;
+    }
+
+    function pickBestSheetName(workbook) {
+      const sheetNames = workbook.SheetNames || [];
+      if (!sheetNames.length) return "";
+      if (sheetNames.length === 1) return sheetNames[0];
+
+      let bestName = sheetNames[0];
+      let bestScore = Number.NEGATIVE_INFINITY;
+
+      for (const name of sheetNames) {
+        const ws = workbook.Sheets[name];
+        if (!ws) continue;
+
+        const aoa = XLSX.utils.sheet_to_json(ws, {
+          header: 1,
+          defval: "",
+          blankrows: false,
+          raw: false
+        });
+        if (!aoa.length) continue;
+
+        const headerIndex = detectHeaderRowIndex(aoa);
+        const headerRow = (aoa[headerIndex] || []).map((v) => normalizeHeader(v));
+        const dataCount = aoa.slice(headerIndex + 1).filter((row) => (row || []).some((cell) => cleanText(cell) !== "")).length;
+
+        let score = 0;
+        if (hasAlias(headerRow, ALIASES.sku)) score += 8;
+        if (hasAlias(headerRow, ALIASES.stock)) score += 4;
+        if (hasAlias(headerRow, ALIASES.price)) score += 4;
+        score += Math.min(headerRow.filter(Boolean).length, 20) * 0.2;
+        score += Math.min(dataCount, 200) * 0.03;
+
+        const n = normalizeHeader(name);
+        if (n.includes("allfragrances") || n.includes("products") || n.includes("newproducts")) score += 2;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestName = name;
+        }
+      }
+
+      return bestName;
+    }
+
+    function detectHeaderRowIndex(aoa) {
+      let bestScore = -1;
+      let bestIndex = 0;
+      const maxScan = Math.min(30, aoa.length);
+
+      for (let i = 0; i < maxScan; i += 1) {
+        const row = aoa[i] || [];
+        const normalized = row.map((cell) => normalizeHeader(cell));
+        let score = 0;
+
+        if (hasAlias(normalized, ALIASES.sku)) score += 4;
+        if (hasAlias(normalized, ALIASES.stock)) score += 2;
+        if (hasAlias(normalized, ALIASES.price)) score += 2;
+        if (normalized.filter(Boolean).length >= 3) score += 1;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = i;
+        }
+      }
+
+      return bestIndex;
+    }
+
+    function hasAlias(normalizedRow, aliases) {
+      for (const alias of aliases) {
+        const nAlias = normalizeHeader(alias);
+        if (normalizedRow.some((h) => h === nAlias || h.includes(nAlias))) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function detectColumnIndex(headers, aliases, preferred = []) {
+      const normalizedHeaders = headers.map((h) => ({ raw: h, n: normalizeHeader(h) }));
+
+      for (const p of preferred) {
+        const idx = normalizedHeaders.findIndex((h) => h.n === normalizeHeader(p));
+        if (idx >= 0) return idx;
+      }
+
+      for (const alias of aliases) {
+        const idx = normalizedHeaders.findIndex((h) => h.n === normalizeHeader(alias));
+        if (idx >= 0) return idx;
+      }
+
+      for (const alias of aliases) {
+        const idx = normalizedHeaders.findIndex((h) => h.n.includes(normalizeHeader(alias)));
+        if (idx >= 0) return idx;
+      }
+
+      return -1;
+    }
+
+    function inferColumnIndexesByContent(dataRows, headers) {
+      const maxRows = Math.min(400, dataRows.length);
+      const columnCount = headers.length;
+
+      let bestSku = { idx: -1, score: -1 };
+      let bestStock = { idx: -1, score: -1 };
+      let bestPrice = { idx: -1, score: -1 };
+
+      for (let col = 0; col < columnCount; col += 1) {
+        const values = [];
+        for (let r = 0; r < maxRows; r += 1) {
+          values.push(cleanText(dataRows[r]?.[col]));
+        }
+
+        const nonEmpty = values.filter(Boolean);
+        if (!nonEmpty.length) continue;
+
+        const numericValues = nonEmpty.map((v) => parseNumber(v)).filter(Number.isFinite);
+        const numericRatio = numericValues.length / nonEmpty.length;
+        const uniqueRatio = new Set(nonEmpty).size / nonEmpty.length;
+        const headerNorm = normalizeHeader(headers[col]);
+
+        let skuScore = 0;
+        if (/[a-z]/i.test(nonEmpty.join(" "))) skuScore += 2;
+        if (uniqueRatio > 0.7) skuScore += 2;
+        if (numericRatio < 0.9) skuScore += 1.5;
+        if (nonEmpty.every((v) => v.length <= 40)) skuScore += 0.5;
+        if (headerNorm.includes("sku") || headerNorm.includes("item") || headerNorm.includes("code")) skuScore += 4;
+
+        let stockScore = 0;
+        const integerRatio = numericValues.length ? numericValues.filter((n) => Number.isInteger(n)).length / numericValues.length : 0;
+        const nonNegativeRatio = numericValues.length ? numericValues.filter((n) => n >= 0).length / numericValues.length : 0;
+        if (numericRatio > 0.8) stockScore += 2.5;
+        if (integerRatio > 0.8) stockScore += 2.5;
+        if (nonNegativeRatio > 0.9) stockScore += 1;
+        if (headerNorm.includes("qty") || headerNorm.includes("stock") || headerNorm.includes("invent")) stockScore += 4;
+
+        let priceScore = 0;
+        const withDecimalsRatio = numericValues.length ? numericValues.filter((n) => Math.abs(n - Math.round(n)) > 0.0001).length / numericValues.length : 0;
+        if (numericRatio > 0.8) priceScore += 2.5;
+        if (withDecimalsRatio > 0.15) priceScore += 2;
+        if (numericValues.length && numericValues.some((n) => n > 5)) priceScore += 1;
+        if (headerNorm.includes("price") || headerNorm.includes("cost") || headerNorm.includes("retail")) priceScore += 4;
+
+        if (skuScore > bestSku.score) bestSku = { idx: col, score: skuScore };
+        if (stockScore > bestStock.score) bestStock = { idx: col, score: stockScore };
+        if (priceScore > bestPrice.score) bestPrice = { idx: col, score: priceScore };
+      }
+
+      return {
+        skuIndex: bestSku.score >= 3 ? bestSku.idx : -1,
+        stockIndex: bestStock.score >= 3 ? bestStock.idx : -1,
+        priceIndex: bestPrice.score >= 3 ? bestPrice.idx : -1
+      };
+    }
+
+    function renderPreview(rows) {
+      const headers = ["sku", "current_quantity", "new_quantity", "current_price", "new_price", "action"];
+      const previewRows = rows.slice(0, 30);
+
+      let html = "<thead class='bg-slate-50'><tr>";
+      for (const h of headers) {
+        html += `<th class='border-b border-slate-200 p-2 text-right font-semibold whitespace-nowrap'>${escapeHtml(h)}</th>`;
+      }
+      html += "</tr></thead><tbody>";
+
+      for (const row of previewRows) {
+        html += "<tr class='odd:bg-white even:bg-slate-50/40'>";
+        for (const h of headers) {
+          html += `<td class='border-b border-slate-100 p-2 align-top whitespace-nowrap'>${escapeHtml(String(row[h] ?? ""))}</td>`;
+        }
+        html += "</tr>";
+      }
+
+      html += "</tbody>";
+      previewTable.innerHTML = html;
+    }
+
+    function setStats(stats) {
+      document.getElementById("statSupplierSkus").textContent = stats.supplierSkus || 0;
+      document.getElementById("statSallaSkus").textContent = stats.sallaSkus || 0;
+      document.getElementById("statQty").textContent = stats.plannedQuantityUpdates || 0;
+      document.getElementById("statPrice").textContent = stats.plannedPriceUpdates || 0;
+      document.getElementById("statDone").textContent = stats.done || 0;
+      document.getElementById("statRemaining").textContent = stats.remaining || 0;
+    }
+
+    function clearUI() {
+      messagesEl.innerHTML = "";
+      previewTable.innerHTML = "";
+      setStats({});
+      resetProgressUI();
+    }
+
+    function addMessage(type, text) {
+      const styles = {
+        success: "bg-emerald-50 border-emerald-300 text-emerald-800",
+        warning: "bg-amber-50 border-amber-300 text-amber-800",
+        error: "bg-rose-50 border-rose-300 text-rose-800",
+        info: "bg-sky-50 border-sky-300 text-sky-800"
+      };
+
+      const box = document.createElement("div");
+      box.className = `border rounded-lg px-3 py-2 text-sm ${styles[type] || styles.info}`;
+      box.textContent = text;
+      messagesEl.appendChild(box);
+    }
+
+    function readWorkbook(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target.result);
+            resolve(XLSX.read(data, { type: "array" }));
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = () => reject(new Error("فشل في قراءة الملف."));
+        reader.readAsArrayBuffer(file);
       });
     }
-  }
 
-  lines.unshift('نتيجة المطابقة: matched=' + matched + ' | unmatched=' + unmatched);
-  lines.unshift('مفاتيح المورد الفريدة: ' + supplierMap.size + ' | في supplierSkuSet: ' + supplierSkuSet.size);
-  lines.unshift('عمود SKU المختار: ' + selectedSkuColumn);
-
-  log.textContent = lines.join("\n");
-
-  lastMatchResult = { exportRows, matched, unmatched };
-
-  document.getElementById('cs1').textContent = matched.toLocaleString();
-  document.getElementById('cs2').textContent = unmatched.toLocaleString();
-  document.getElementById('cs3').textContent = (matched + unmatched).toLocaleString();
-  document.getElementById('cs4').textContent = supplierMap.size.toLocaleString();
-  document.getElementById('cmpStats').classList.remove('hidden');
-  document.getElementById('exportBtn').disabled = false;
-}
-
-function exportMatchedXlsx() {
-  if (!lastMatchResult || !lastMatchResult.exportRows.length) {
-    showSupplierMessage('❌ نفّذ المطابقة أولاً قبل التصدير.', 'err');
-    return;
-  }
-
-  try {
-    const headers = ['Row Type', 'Product ID', 'Product Name', 'Variant ID', 'Variant Name', 'SKU', 'Matched', 'Supplier Cost', 'Supplier Retail Price'];
-    const data = [headers];
-
-    for (const r of lastMatchResult.exportRows) {
-      data.push([
-        r.row_type,
-        r.product_id,
-        r.product_name,
-        r.variant_id,
-        r.variant_name,
-        r.sku,
-        r.matched,
-        r.supplier_cost,
-        r.supplier_retail,
-      ]);
+    function normalizeHeader(v) {
+      return String(v || "")
+        .toLowerCase()
+        .replace(/\u00a0/g, " ")
+        .replace(/[\s_\-./\\()\[\]{}:]+/g, "")
+        .trim();
     }
 
-    const ws = XLSX.utils.aoa_to_sheet(data);
+    function cleanText(v) {
+      return String(v ?? "").trim();
+    }
 
-    const colWidths = [12, 12, 30, 12, 25, 18, 10, 15, 15];
-    ws['!cols'] = colWidths.map(w => ({ wch: w }));
+    function parseNumber(v) {
+      if (v === null || v === undefined) return NaN;
+      const s = String(v).replace(/,/g, "").trim();
+      if (!s) return NaN;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : NaN;
+    }
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Matched Products');
-    XLSX.writeFile(wb, 'salla_matched_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+    function parseInteger(v) {
+      const n = parseNumber(v);
+      if (!Number.isFinite(n)) return 0;
+      return Math.max(0, Math.round(n));
+    }
 
-    showSupplierMessage('✅ تم تصدير ' + lastMatchResult.exportRows.length + ' صف إلى XLSX.', 'ok');
-  } catch (e) {
-    showSupplierMessage('❌ فشل التصدير: ' + e.message, 'err');
-  }
-}
-</script>
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+  </script>
 </body>
 </html>
