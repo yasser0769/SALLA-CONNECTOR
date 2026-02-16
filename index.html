@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>مزامنة سلة عبر API</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: "Tajawal", "Segoe UI", Tahoma, sans-serif; }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-b from-slate-100 via-white to-slate-100 text-slate-800">
+  <main class="max-w-7xl mx-auto p-4 md:p-8">
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 md:p-7">
+      <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-6">
+        <div>
+          <h1 class="text-2xl md:text-3xl font-bold">مزامنة سلة API</h1>
+          <p class="text-sm text-slate-500 mt-1">تحديث السعر والمخزون من ملف المورد مباشرة إلى سلة مع تصفير SKU غير الموجود.</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="connectBtn" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">ربط سلة</button>
+          <button id="logoutBtn" class="px-4 py-2.5 rounded-xl bg-slate-600 hover:bg-slate-700 text-white font-semibold">فصل</button>
+        </div>
+      </div>
+
+      <div class="mb-6 border border-slate-200 rounded-xl p-4 bg-slate-50">
+        <p class="text-sm">حالة الربط: <span id="connectionStatus" class="font-semibold text-rose-700">غير متصل</span></p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <label class="block border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50 hover:bg-slate-100 transition cursor-pointer">
+          <p class="font-semibold mb-1">ملف المورد (إجباري)</p>
+          <p class="text-xs text-slate-500 mb-3">يشمل items/SKU + stock + price</p>
+          <input id="supplierFile" type="file" accept=".csv,.xlsx,.xls" class="block w-full text-sm file:mr-0 file:ml-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-slate-200 file:text-slate-700">
+        </label>
+
+        <div class="border border-slate-200 rounded-xl p-4 bg-slate-50">
+          <p class="font-semibold mb-3">خيارات التحديث</p>
+          <label class="flex items-center gap-2 text-sm mb-2 cursor-pointer">
+            <input id="zeroMissingSku" type="checkbox" class="w-4 h-4" checked>
+            تصفير مخزون SKU غير الموجود في ملف المورد
+          </label>
+          <p class="text-xs text-slate-500">التصفير يطبق على SKU الموجود في سلة فقط.</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 mb-6">
+        <button id="previewBtn" class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">معاينة التحديث (Dry Run)</button>
+        <button id="applyBtn" class="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed" disabled>تنفيذ التحديث الآن</button>
+      </div>
+
+      <div id="messages" class="space-y-2 mb-6"></div>
+
+      <div id="progressWrap" class="hidden mb-6 border border-slate-200 rounded-xl p-4 bg-slate-50">
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <p id="progressText" class="text-sm font-semibold text-slate-700">جاري التنفيذ...</p>
+          <p id="progressPercent" class="text-sm font-bold text-slate-700">0%</p>
+        </div>
+        <div class="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+          <div id="progressBar" class="h-3 bg-emerald-600 transition-all duration-300" style="width:0%"></div>
+        </div>
+        <p id="progressDetail" class="text-xs text-slate-600 mt-2">تم 0 من 0 | المتبقي 0</p>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">SKU المورد</p>
+          <p id="statSupplierSkus" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">SKU سلة</p>
+          <p id="statSallaSkus" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">تحديث مخزون</p>
+          <p id="statQty" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">تحديث سعر</p>
+          <p id="statPrice" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">تم تنفيذه</p>
+          <p id="statDone" class="text-xl font-bold">0</p>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <p class="text-xs text-slate-500">المتبقي</p>
+          <p id="statRemaining" class="text-xl font-bold">0</p>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <h2 class="font-semibold">معاينة أول 30 صف سيتم تعديلها</h2>
+      </div>
+
+      <div class="overflow-auto border border-slate-200 rounded-xl">
+        <table id="previewTable" class="min-w-full text-sm"></table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const supplierInput = document.getElementById("supplierFile");
+    const zeroMissingSkuInput = document.getElementById("zeroMissingSku");
+    const previewBtn = document.getElementById("previewBtn");
+    const applyBtn = document.getElementById("applyBtn");
+    const connectBtn = document.getElementById("connectBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
+    const statusEl = document.getElementById("connectionStatus");
+    const messagesEl = document.getElementById("messages");
+    const previewTable = document.getElementById("previewTable");
+    const progressWrap = document.getElementById("progressWrap");
+    const progressBar = document.getElementById("progressBar");
+    const progressPercent = document.getElementById("progressPercent");
+    const progressText = document.getElementById("progressText");
+    const progressDetail = document.getElementById("progressDetail");
+
+    const ALIASES = {
+      sku: [
+        "items", "item", "item#", "item no", "item no.", "item number", "item code",
+        "code", "product code", "product sku", "sku", "variant sku", "variantsku",
+        "رمز المنتج sku", "رمز المنتج", "sku code"
+      ],
+      price: [
+        "price", "unit price", "variant price", "selling price", "sale price", "retail",
+        "our price", "wholesale", "cost", "final price", "price sar", "سعر المنتج", "السعر"
+      ],
+      stock: [
+        "stock", "qty", "quantity", "qoh", "qty on hand", "available", "available qty",
+        "inventory", "on hand", "instock", "المخزون", "الكمية"
+      ]
+    };
+
+    let lastPreviewReady = false;
+    let activeJobId = "";
+    let jobPollTimer = null;
+
+    connectBtn.addEventListener("click", () => {
+      window.location.href = "/auth/salla";
+    });
+
+    logoutBtn.addEventListener("click", async () => {
+      stopJobPolling();
+      await fetch("/api/logout", { method: "POST" });
+      lastPreviewReady = false;
+      applyBtn.disabled = true;
+      resetProgressUI();
+      await refreshStatus();
+      addMessage("info", "تم فصل الربط.");
+    });
+
+    previewBtn.addEventListener("click", async () => {
+      await runSync(true);
+    });
+
+    applyBtn.addEventListener("click", async () => {
+      const ok = confirm("سيتم تنفيذ التحديث مباشرة على متجر سلة. هل أنت متأكد؟");
+      if (!ok) return;
+      await runSync(false);
+    });
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      resetProgressUI();
+      await refreshStatus();
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("auth") === "success") {
+        addMessage("success", "تم الربط مع سلة بنجاح.");
+        window.history.replaceState({}, document.title, "/index.html");
+      }
+    });
+
+    async function runSync(dryRun) {
+      stopJobPolling();
+      clearUI();
+      applyBtn.disabled = true;
+      lastPreviewReady = false;
+
+      const status = await getStatus();
+      if (!status.connected) {
+        addMessage("error", "أكمل ربط سلة أولاً من زر (ربط سلة).");
+        return;
+      }
+
+      const supplierFile = supplierInput.files[0];
+      if (!supplierFile) {
+        addMessage("error", "ارفع ملف المورد أولاً.");
+        return;
+      }
+
+      try {
+        const supplierItems = await readSupplierItems(supplierFile);
+        if (!supplierItems.length) {
+          throw new Error("لم يتم استخراج أي SKU من ملف المورد.");
+        }
+
+        addMessage("info", `تم تجهيز ${supplierItems.length} صف من ملف المورد.`);
+
+        const response = await fetch("/api/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            supplierItems,
+            zeroMissingSku: zeroMissingSkuInput.checked,
+            dryRun,
+            async: !dryRun
+          })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.message || data.error || "فشل غير معروف من الخادم.");
+        }
+
+        setStats(data.stats);
+        renderPreview(data.previewRows || []);
+
+        if (dryRun) {
+          addMessage("success", "تم إنشاء المعاينة بنجاح.");
+          addMessage("info", `سيتم تحديث المخزون: ${data.stats.plannedQuantityUpdates} | الأسعار: ${data.stats.plannedPriceUpdates}`);
+          if (data.stats.missingSupplierInSalla > 0) {
+            addMessage("warning", `SKU بالمورد وغير موجود في سلة: ${data.stats.missingSupplierInSalla}`);
+          }
+          lastPreviewReady = true;
+          applyBtn.disabled = (data.stats.plannedQuantityUpdates + data.stats.plannedPriceUpdates) === 0;
+          return;
+        }
+
+        if (data.async && data.job_id) {
+          activeJobId = data.job_id;
+          addMessage("info", "بدأ تنفيذ التحديث. سيتم عرض التقدم المباشر الآن.");
+          updateProgressUI(data.progress || {}, "جاري التنفيذ");
+          startJobPolling(activeJobId);
+          return;
+        }
+
+        applySyncResult(data);
+      } catch (error) {
+        addMessage("error", `تعذر إكمال العملية: ${error.message}`);
+      }
+    }
+
+    function startJobPolling(jobId) {
+      stopJobPolling();
+      jobPollTimer = setInterval(() => {
+        pollSyncJob(jobId).catch(() => {});
+      }, 1200);
+      pollSyncJob(jobId).catch(() => {});
+    }
+
+    function stopJobPolling() {
+      if (jobPollTimer) {
+        clearInterval(jobPollTimer);
+        jobPollTimer = null;
+      }
+      activeJobId = "";
+    }
+
+    async function pollSyncJob(jobId) {
+      if (!jobId) return;
+
+      const response = await fetch(`/api/sync/progress?job_id=${encodeURIComponent(jobId)}`);
+      const data = await response.json();
+      if (!response.ok) {
+        stopJobPolling();
+        addMessage("error", data.message || "تعذر قراءة تقدم المهمة.");
+        return;
+      }
+
+      updateProgressUI(data.progress || {}, phaseLabel(data.status, data.progress?.phase));
+
+      if (data.stats) {
+        setStats({
+          ...data.stats,
+          done: data.progress?.done || 0,
+          remaining: data.progress?.remaining || 0
+        });
+      }
+
+      if (data.status === "completed") {
+        stopJobPolling();
+        applySyncResult(data.result || {});
+        updateProgressUI(data.progress || {}, "اكتمل التنفيذ");
+        applyBtn.disabled = false;
+        return;
+      }
+
+      if (data.status === "failed") {
+        stopJobPolling();
+        addMessage("error", data.error || "فشل تنفيذ المهمة.");
+        applyBtn.disabled = false;
+      }
+    }
+
+    function applySyncResult(data) {
+      if (data.stats) {
+        setStats({
+          ...data.stats,
+          done: Number(data.stats.quantityUpdated || 0) + Number(data.stats.priceUpdated || 0),
+          remaining: 0
+        });
+      }
+
+      if (Array.isArray(data.previewRows)) {
+        renderPreview(data.previewRows);
+      }
+
+      addMessage("success", "تم تنفيذ التحديث على سلة.");
+      addMessage("info", `نجح تحديث المخزون: ${data.stats?.quantityUpdated || 0} | نجح تحديث السعر: ${data.stats?.priceUpdated || 0}`);
+
+      if ((data.failedQuantityUpdates || []).length > 0) {
+        addMessage("warning", `فشل ${data.failedQuantityUpdates.length} صف في تحديث المخزون. راجع السجل.`);
+        console.table(data.failedQuantityUpdates);
+      }
+
+      if ((data.failedPriceUpdates || []).length > 0) {
+        addMessage("warning", `فشل ${data.failedPriceUpdates.length} SKU في تحديث السعر. راجع السجل.`);
+        console.table(data.failedPriceUpdates);
+      }
+    }
+
+    function updateProgressUI(progress, title) {
+      const total = Number(progress?.total || 0);
+      const done = Number(progress?.done || 0);
+      const remaining = Number(progress?.remaining || Math.max(0, total - done));
+      const percent = Number.isFinite(Number(progress?.percent))
+        ? Number(progress.percent)
+        : (total > 0 ? Number(((done / total) * 100).toFixed(1)) : 100);
+
+      const qtyDone = Number(progress?.quantity?.done || 0) + Number(progress?.quantity?.failed || 0);
+      const qtyTotal = Number(progress?.quantity?.total || 0);
+      const priceDone = Number(progress?.price?.done || 0) + Number(progress?.price?.failed || 0);
+      const priceTotal = Number(progress?.price?.total || 0);
+
+      progressWrap.classList.remove("hidden");
+      progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+      progressPercent.textContent = `${Math.max(0, Math.min(100, percent))}%`;
+      progressText.textContent = title || "جاري التنفيذ";
+      progressDetail.textContent = `تم ${done} من ${total} | المتبقي ${remaining} | مخزون ${qtyDone}/${qtyTotal} | سعر ${priceDone}/${priceTotal}`;
+
+      document.getElementById("statDone").textContent = done;
+      document.getElementById("statRemaining").textContent = remaining;
+    }
+
+    function resetProgressUI() {
+      progressWrap.classList.add("hidden");
+      progressBar.style.width = "0%";
+      progressPercent.textContent = "0%";
+      progressText.textContent = "جاري التنفيذ...";
+      progressDetail.textContent = "تم 0 من 0 | المتبقي 0";
+    }
+
+    function phaseLabel(status, phase) {
+      if (status === "completed") return "اكتمل التنفيذ";
+      if (status === "failed") return "فشل التنفيذ";
+      if (phase === "price") return "جاري تحديث الأسعار";
+      if (phase === "quantity") return "جاري تحديث المخزون";
+      return "جاري التنفيذ";
+    }
+
+    async function refreshStatus() {
+      const status = await getStatus();
+      if (status.connected) {
+        statusEl.textContent = "متصل";
+        statusEl.className = "font-semibold text-emerald-700";
+      } else {
+        statusEl.textContent = "غير متصل";
+        statusEl.className = "font-semibold text-rose-700";
+      }
+    }
+
+    async function getStatus() {
+      try {
+        const response = await fetch("/api/status");
+        if (!response.ok) return { connected: false };
+        return response.json();
+      } catch {
+        return { connected: false };
+      }
+    }
+
+    async function readSupplierItems(file) {
+      const wb = await readWorkbook(file);
+      const sheetName = pickBestSheetName(wb);
+      const ws = wb.Sheets[sheetName];
+      if (!ws) {
+        throw new Error("تعذر قراءة الشيت من ملف المورد.");
+      }
+
+      const aoa = XLSX.utils.sheet_to_json(ws, {
+        header: 1,
+        defval: "",
+        blankrows: false,
+        raw: false
+      });
+
+      if (!aoa.length) {
+        throw new Error("ملف المورد فارغ.");
+      }
+
+      const headerRowIndex = detectHeaderRowIndex(aoa);
+      const headerRow = aoa[headerRowIndex] || [];
+      const dataRows = aoa
+        .slice(headerRowIndex + 1)
+        .filter((row) => Array.isArray(row) && row.some((cell) => cleanText(cell) !== ""));
+
+      if (!dataRows.length) {
+        throw new Error("لم يتم العثور على بيانات في ملف المورد.");
+      }
+
+      const headers = headerRow.map((h, idx) => cleanText(h) || `COL_${idx + 1}`);
+
+      let skuIndex = detectColumnIndex(headers, ALIASES.sku, ["items", "item", "item#", "item no", "sku", "code"]);
+      let stockIndex = detectColumnIndex(headers, ALIASES.stock);
+      let priceIndex = detectColumnIndex(headers, ALIASES.price);
+
+      const inferred = inferColumnIndexesByContent(dataRows, headers);
+      if (skuIndex < 0) skuIndex = inferred.skuIndex;
+      if (stockIndex < 0) stockIndex = inferred.stockIndex;
+      if (priceIndex < 0) priceIndex = inferred.priceIndex;
+
+      if (skuIndex < 0) {
+        const sampleHeaders = headers.slice(0, 20).join(" | ");
+        throw new Error(`لم أجد عمود items/SKU في ملف المورد. العناوين المكتشفة: ${sampleHeaders}`);
+      }
+      if (stockIndex < 0) {
+        const sampleHeaders = headers.slice(0, 20).join(" | ");
+        throw new Error(`لم أجد عمود المخزون في ملف المورد. العناوين المكتشفة: ${sampleHeaders}`);
+      }
+      if (priceIndex < 0) {
+        const sampleHeaders = headers.slice(0, 20).join(" | ");
+        throw new Error(`لم أجد عمود السعر في ملف المورد. العناوين المكتشفة: ${sampleHeaders}`);
+      }
+
+      addMessage("info", `تم التعرف على الأعمدة: SKU=${headers[skuIndex]} | Stock=${headers[stockIndex]} | Price=${headers[priceIndex]} | Sheet=${sheetName}`);
+
+      const items = [];
+      for (const row of dataRows) {
+        const sku = cleanText(row[skuIndex]);
+        if (!sku) continue;
+        items.push({
+          sku,
+          stock: parseInteger(row[stockIndex]),
+          price: parseNumber(row[priceIndex])
+        });
+      }
+
+      return items;
+    }
+
+    function pickBestSheetName(workbook) {
+      const sheetNames = workbook.SheetNames || [];
+      if (!sheetNames.length) return "";
+      if (sheetNames.length === 1) return sheetNames[0];
+
+      let bestName = sheetNames[0];
+      let bestScore = Number.NEGATIVE_INFINITY;
+
+      for (const name of sheetNames) {
+        const ws = workbook.Sheets[name];
+        if (!ws) continue;
+
+        const aoa = XLSX.utils.sheet_to_json(ws, {
+          header: 1,
+          defval: "",
+          blankrows: false,
+          raw: false
+        });
+        if (!aoa.length) continue;
+
+        const headerIndex = detectHeaderRowIndex(aoa);
+        const headerRow = (aoa[headerIndex] || []).map((v) => normalizeHeader(v));
+        const dataCount = aoa.slice(headerIndex + 1).filter((row) => (row || []).some((cell) => cleanText(cell) !== "")).length;
+
+        let score = 0;
+        if (hasAlias(headerRow, ALIASES.sku)) score += 8;
+        if (hasAlias(headerRow, ALIASES.stock)) score += 4;
+        if (hasAlias(headerRow, ALIASES.price)) score += 4;
+        score += Math.min(headerRow.filter(Boolean).length, 20) * 0.2;
+        score += Math.min(dataCount, 200) * 0.03;
+
+        const n = normalizeHeader(name);
+        if (n.includes("allfragrances") || n.includes("products") || n.includes("newproducts")) score += 2;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestName = name;
+        }
+      }
+
+      return bestName;
+    }
+
+    function detectHeaderRowIndex(aoa) {
+      let bestScore = -1;
+      let bestIndex = 0;
+      const maxScan = Math.min(30, aoa.length);
+
+      for (let i = 0; i < maxScan; i += 1) {
+        const row = aoa[i] || [];
+        const normalized = row.map((cell) => normalizeHeader(cell));
+        let score = 0;
+
+        if (hasAlias(normalized, ALIASES.sku)) score += 4;
+        if (hasAlias(normalized, ALIASES.stock)) score += 2;
+        if (hasAlias(normalized, ALIASES.price)) score += 2;
+        if (normalized.filter(Boolean).length >= 3) score += 1;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = i;
+        }
+      }
+
+      return bestIndex;
+    }
+
+    function hasAlias(normalizedRow, aliases) {
+      for (const alias of aliases) {
+        const nAlias = normalizeHeader(alias);
+        if (normalizedRow.some((h) => h === nAlias || h.includes(nAlias))) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function detectColumnIndex(headers, aliases, preferred = []) {
+      const normalizedHeaders = headers.map((h) => ({ raw: h, n: normalizeHeader(h) }));
+
+      for (const p of preferred) {
+        const idx = normalizedHeaders.findIndex((h) => h.n === normalizeHeader(p));
+        if (idx >= 0) return idx;
+      }
+
+      for (const alias of aliases) {
+        const idx = normalizedHeaders.findIndex((h) => h.n === normalizeHeader(alias));
+        if (idx >= 0) return idx;
+      }
+
+      for (const alias of aliases) {
+        const idx = normalizedHeaders.findIndex((h) => h.n.includes(normalizeHeader(alias)));
+        if (idx >= 0) return idx;
+      }
+
+      return -1;
+    }
+
+    function inferColumnIndexesByContent(dataRows, headers) {
+      const maxRows = Math.min(400, dataRows.length);
+      const columnCount = headers.length;
+
+      let bestSku = { idx: -1, score: -1 };
+      let bestStock = { idx: -1, score: -1 };
+      let bestPrice = { idx: -1, score: -1 };
+
+      for (let col = 0; col < columnCount; col += 1) {
+        const values = [];
+        for (let r = 0; r < maxRows; r += 1) {
+          values.push(cleanText(dataRows[r]?.[col]));
+        }
+
+        const nonEmpty = values.filter(Boolean);
+        if (!nonEmpty.length) continue;
+
+        const numericValues = nonEmpty.map((v) => parseNumber(v)).filter(Number.isFinite);
+        const numericRatio = numericValues.length / nonEmpty.length;
+        const uniqueRatio = new Set(nonEmpty).size / nonEmpty.length;
+        const headerNorm = normalizeHeader(headers[col]);
+
+        let skuScore = 0;
+        if (/[a-z]/i.test(nonEmpty.join(" "))) skuScore += 2;
+        if (uniqueRatio > 0.7) skuScore += 2;
+        if (numericRatio < 0.9) skuScore += 1.5;
+        if (nonEmpty.every((v) => v.length <= 40)) skuScore += 0.5;
+        if (headerNorm.includes("sku") || headerNorm.includes("item") || headerNorm.includes("code")) skuScore += 4;
+
+        let stockScore = 0;
+        const integerRatio = numericValues.length ? numericValues.filter((n) => Number.isInteger(n)).length / numericValues.length : 0;
+        const nonNegativeRatio = numericValues.length ? numericValues.filter((n) => n >= 0).length / numericValues.length : 0;
+        if (numericRatio > 0.8) stockScore += 2.5;
+        if (integerRatio > 0.8) stockScore += 2.5;
+        if (nonNegativeRatio > 0.9) stockScore += 1;
+        if (headerNorm.includes("qty") || headerNorm.includes("stock") || headerNorm.includes("invent")) stockScore += 4;
+
+        let priceScore = 0;
+        const withDecimalsRatio = numericValues.length ? numericValues.filter((n) => Math.abs(n - Math.round(n)) > 0.0001).length / numericValues.length : 0;
+        if (numericRatio > 0.8) priceScore += 2.5;
+        if (withDecimalsRatio > 0.15) priceScore += 2;
+        if (numericValues.length && numericValues.some((n) => n > 5)) priceScore += 1;
+        if (headerNorm.includes("price") || headerNorm.includes("cost") || headerNorm.includes("retail")) priceScore += 4;
+
+        if (skuScore > bestSku.score) bestSku = { idx: col, score: skuScore };
+        if (stockScore > bestStock.score) bestStock = { idx: col, score: stockScore };
+        if (priceScore > bestPrice.score) bestPrice = { idx: col, score: priceScore };
+      }
+
+      return {
+        skuIndex: bestSku.score >= 3 ? bestSku.idx : -1,
+        stockIndex: bestStock.score >= 3 ? bestStock.idx : -1,
+        priceIndex: bestPrice.score >= 3 ? bestPrice.idx : -1
+      };
+    }
+
+    function renderPreview(rows) {
+      const headers = ["sku", "current_quantity", "new_quantity", "current_price", "new_price", "action"];
+      const previewRows = rows.slice(0, 30);
+
+      let html = "<thead class='bg-slate-50'><tr>";
+      for (const h of headers) {
+        html += `<th class='border-b border-slate-200 p-2 text-right font-semibold whitespace-nowrap'>${escapeHtml(h)}</th>`;
+      }
+      html += "</tr></thead><tbody>";
+
+      for (const row of previewRows) {
+        html += "<tr class='odd:bg-white even:bg-slate-50/40'>";
+        for (const h of headers) {
+          html += `<td class='border-b border-slate-100 p-2 align-top whitespace-nowrap'>${escapeHtml(String(row[h] ?? ""))}</td>`;
+        }
+        html += "</tr>";
+      }
+
+      html += "</tbody>";
+      previewTable.innerHTML = html;
+    }
+
+    function setStats(stats) {
+      document.getElementById("statSupplierSkus").textContent = stats.supplierSkus || 0;
+      document.getElementById("statSallaSkus").textContent = stats.sallaSkus || 0;
+      document.getElementById("statQty").textContent = stats.plannedQuantityUpdates || 0;
+      document.getElementById("statPrice").textContent = stats.plannedPriceUpdates || 0;
+      document.getElementById("statDone").textContent = stats.done || 0;
+      document.getElementById("statRemaining").textContent = stats.remaining || 0;
+    }
+
+    function clearUI() {
+      messagesEl.innerHTML = "";
+      previewTable.innerHTML = "";
+      setStats({});
+      resetProgressUI();
+    }
+
+    function addMessage(type, text) {
+      const styles = {
+        success: "bg-emerald-50 border-emerald-300 text-emerald-800",
+        warning: "bg-amber-50 border-amber-300 text-amber-800",
+        error: "bg-rose-50 border-rose-300 text-rose-800",
+        info: "bg-sky-50 border-sky-300 text-sky-800"
+      };
+
+      const box = document.createElement("div");
+      box.className = `border rounded-lg px-3 py-2 text-sm ${styles[type] || styles.info}`;
+      box.textContent = text;
+      messagesEl.appendChild(box);
+    }
+
+    function readWorkbook(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target.result);
+            resolve(XLSX.read(data, { type: "array" }));
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = () => reject(new Error("فشل في قراءة الملف."));
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    function normalizeHeader(v) {
+      return String(v || "")
+        .toLowerCase()
+        .replace(/\u00a0/g, " ")
+        .replace(/[\s_\-./\\()\[\]{}:]+/g, "")
+        .trim();
+    }
+
+    function cleanText(v) {
+      return String(v ?? "").trim();
+    }
+
+    function parseNumber(v) {
+      if (v === null || v === undefined) return NaN;
+      const s = String(v).replace(/,/g, "").trim();
+      if (!s) return NaN;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    function parseInteger(v) {
+      const n = parseNumber(v);
+      if (!Number.isFinite(n)) return 0;
+      return Math.max(0, Math.round(n));
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>
