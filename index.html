@@ -137,7 +137,8 @@
     let jobPollTimer = null;
 
     connectBtn.addEventListener("click", () => {
-      window.location.href = "/auth/salla";
+      const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+      window.location.href = isLocal ? "/auth/salla" : "/api/oauth/start";
     });
 
     logoutBtn.addEventListener("click", async () => {
@@ -164,9 +165,13 @@
       resetProgressUI();
       await refreshStatus();
       const params = new URLSearchParams(window.location.search);
-      if (params.get("auth") === "success") {
+      if (params.get("auth") === "success" || params.get("oauth") === "success") {
         addMessage("success", "تم الربط مع سلة بنجاح.");
         window.history.replaceState({}, document.title, "/index.html");
+      }
+      if (params.get("oauth") === "error") {
+        const reason = params.get("reason") || "unknown";
+        addMessage("error", `فشل الربط مع سلة: ${reason}`);
       }
     });
 
