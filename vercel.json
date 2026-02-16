@@ -1,5 +1,14 @@
 {
   "functions": {
+    "api/sync.js": {
+      "maxDuration": 60
+    },
+    "api/status.js": {
+      "maxDuration": 10
+    },
+    "api/logout.js": {
+      "maxDuration": 10
+    },
     "api/salla.js": {
       "maxDuration": 30
     },
@@ -10,6 +19,16 @@
       "maxDuration": 15
     }
   },
+  "rewrites": [
+    {
+      "source": "/auth/salla",
+      "destination": "/api/oauth/start"
+    },
+    {
+      "source": "/callback",
+      "destination": "/api/oauth/callback"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",
